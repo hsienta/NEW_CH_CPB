@@ -65,18 +65,10 @@ iOS requires user-gesture-gated audio. The game handles this with two separate s
 
 **When bumping the SW version** (e.g. after adding/removing assets), update both `SHELL_VER` and `ASSETS_VER` constants in `sw.js` so stale caches are evicted. The `activate` handler deletes any cache name not in `ALL_CACHES`.
 
-### Install Prompt Logic (in `index.html`)
-- Shows 300 ms after page load on **all** platforms.
-- Android with `beforeinstallprompt`: native install button.
-- Android without it: shows manual "⋮ menu" instructions.
-- iOS: shows "Share → Add to Home Screen" instructions.
-- Intentionally shows on every visit until the app is in `standalone` mode — **do not add localStorage suppression** (users are elderly and cannot clear cache).
-- LINE in-app browser: shows a "用瀏覽器開啟" button that reloads with `?openExternalBrowser=1` (LINE opens it in Safari/Chrome); the param is stripped on load. Other in-app browsers (FB/IG/WeChat) get manual "open in browser" steps.
-- Overlay buttons close on `touchend` + `preventDefault` so the tap doesn't fall through to the sound-permission button underneath.
-- Maskable icon is a separate padded file, `icons/icon-maskable-512.png`.
-
-### Update Toast
-`#pwaUpdateToast` appears at the top when a new SW version is `installed` (not yet activated). Clicking it calls `location.reload()`.
+### No Install Prompt, No Update Toast
+- The owner asked to remove both. There is **no** install-to-home-screen overlay and **no** "new version" toast — do not add them back.
+- New versions install silently: `sw.js` calls `skipWaiting()` + `clients.claim()`, and users get the new `index.html` on their next open.
+- Only change `sw.js` (and bump `SHELL_VER`/`ASSETS_VER`) when cached files actually change; an unchanged `sw.js` means no SW update at all.
 
 ## Key Constraints
 
