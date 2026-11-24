@@ -66,10 +66,21 @@
     <h2>依難度</h2>
     <div class="table-wrap"><table id="diffTable"></table></div>
 
-    <h2>每日（台灣時間，最近 30 天）</h2>
+    <p class="hint" style="margin-top:20px">以下時間都是「實際玩的時間」（台灣時間）。離線玩、之後才補傳的紀錄也會算在實際玩的那一天。</p>
+
+    <h2>每週（最近 12 週，週一開始）</h2>
+    <div class="table-wrap"><table id="weekTable"></table></div>
+
+    <h2>星期幾玩最多</h2>
+    <div class="table-wrap"><table id="weekdayTable"></table></div>
+
+    <h2>什麼時段玩最多</h2>
+    <div class="table-wrap"><table id="slotTable"></table></div>
+
+    <h2>每日（最近 30 天）</h2>
     <div class="table-wrap"><table id="dayTable"></table></div>
 
-    <h2>最近 200 局</h2>
+    <h2>最近 200 局（依實際遊玩時間）</h2>
     <p class="hint">正確率 = 切下去的食物中切對的比例；命中率 = 出現的正確食物中有切到的比例。</p>
     <div class="table-wrap"><table id="recentTable"></table></div>
   </div>
@@ -85,8 +96,15 @@
   const pct = v => v == null ? '–' : (v * 100).toFixed(1) + '%';
   const dur = s => { if (s == null) return '–'; s = Math.round(s); const m = Math.floor(s / 60); return m ? `${m} 分 ${s % 60} 秒` : `${s} 秒`; };
   const diffName = d => d === 'expert' ? '達人' : d === 'novice' ? '新手' : (d || '–');
-  const twTime = t => { if (!t) return '–'; const d = new Date(t.replace(' ', 'T') + 'Z');
-    return d.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); };
+  // played_tw 已是台灣時間 'YYYY-MM-DD HH:MM:SS'
+  const twTime = t => t ? t.slice(5, 10).replace('-', '/') + ' ' + t.slice(11, 16) : '–';
+  const weekLabel = d => { if (!d) return '–'; const end = new Date(d + 'T00:00:00Z'); end.setUTCDate(end.getUTCDate() + 6);
+    return d.slice(5).replace('-', '/') + ' – ' + end.toISOString().slice(5, 10).replace('-', '/'); };
+  const WEEKDAYS = [[1, '週一'], [2, '週二'], [3, '週三'], [4, '週四'], [5, '週五'], [6, '週六'], [0, '週日']];
+  const SLOTS = ['清晨 5–8 點', '上午 8–12 點', '下午 12–17 點', '晚上 17–21 點', '深夜 21–5 點'];
+  const byKey = (rows, k) => Object.fromEntries((rows || []).map(r => [r[k], r]));
+  const groupRow = (label, r) => [label, num(r && r.games || 0), num(r && r.players || 0), r ? num(r.avg_score) : '–', r ? pct(r.avg_accuracy) : '–'];
+  const GROUP_HEAD = ['', '局數', '玩家數', '平均分數', '平均正確率'];
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   function table(el, head, rows) {
@@ -115,11 +133,17 @@
 
     table($('diffTable'), ['難度', '局數', '平均分數', '平均正確率'],
       data.byDifficulty.map(r => [diffName(r.difficulty), num(r.games), num(r.avg_score), pct(r.avg_accuracy)]));
-    table($('dayTable'), ['日期', '局數', '玩家數', '平均分數'],
-      data.byDay.map(r => [r.day, num(r.games), num(r.players), num(r.avg_score)]));
+    table($('weekTable'), ['週', ...GROUP_HEAD.slice(1)], data.byWeek.map(r => groupRow(weekLabel(r.week), r)));
+    const wd = byKey(data.byWeekday, 'weekday');
+    table($('weekdayTable'), ['星期', ...GROUP_HEAD.slice(1)],
+      data.byWeekday.length ? WEEKDAYS.map(([k, label]) => groupRow(label, wd[k])) : []);
+    const sl = byKey(data.byTimeOfDay, 'slot');
+    table($('slotTable'), ['時段', ...GROUP_HEAD.slice(1)],
+      data.byTimeOfDay.length ? SLOTS.map((label, i) => groupRow(label, sl[i])) : []);
+    table($('dayTable'), ['日期', ...GROUP_HEAD.slice(1)], data.byDay.map(r => groupRow(r.day, r)));
     table($('recentTable'),
       ['時間', '玩家', '難度', '時長', '分數', '正確率', '命中率', '切對', '切錯', '垃圾食物', '第一關', '第二關', '第三關'],
-      data.recent.map(r => [twTime(r.created_at), (r.player_id || '–').slice(0, 8), diffName(r.difficulty),
+      data.recent.map(r => [twTime(r.played_tw), (r.player_id || '–').slice(0, 8), diffName(r.difficulty),
         dur(r.duration_sec), num(r.final_score), pct(r.accuracy), pct(r.hit_rate),
         num(r.correct_hits), num(r.wrong_hits), num(r.bad_hits), num(r.l1_score), num(r.l2_score), num(r.l3_score)]));
   }

@@ -506,7 +506,7 @@
             }).then(r => { if (!r.ok) throw new Error(r.status); });
         }
 
-        // 網路不穩時先存在本機，下次開啟再補送
+        // 網路不穩時先存在本機，之後有網路再補送（見下方補傳時機）
         function flushPendingLogs() {
             const list = readPending();
             if (!list.length) return;
@@ -523,6 +523,9 @@
             const hits = sum('hits'), wrong = sum('wrong'), bad = sum('bad'), spawned = sum('spawned');
             const sliced = hits + wrong + bad;
             const rec = {
+                log_id: (crypto.randomUUID ? crypto.randomUUID()
+                    : Date.now().toString(36) + Math.random().toString(36).slice(2)),  // 防止補傳時重複
+                played_at: new Date().toISOString(),  // 實際玩完的時間（離線補傳也正確）
                 player_id: getPlayerId(),
                 difficulty: difficulty,
                 duration_sec: gameStartTime ? Math.round((Date.now() - gameStartTime) / 1000) : null,
@@ -538,7 +541,12 @@
             };
             postLog(rec).catch(() => writePending(readPending().concat([rec])));
         }
+        // 補傳時機：開啟遊戲、恢復網路、從背景切回來
         window.addEventListener('load', () => setTimeout(flushPendingLogs, 2000));
+        window.addEventListener('online', () => setTimeout(flushPendingLogs, 1000));
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && navigator.onLine !== false) flushPendingLogs();
+        });
 
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');

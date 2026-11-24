@@ -82,5 +82,8 @@ iOS requires user-gesture-gated audio. The game handles this with two separate s
 - At `finishGame()` the client POSTs one record per game to `/api/log` (`functions/api/log.js`, a Pages Function).
 - Stored in D1 database `swether-cpb` (binding `DB`, declared in `wrangler.toml`), table `plays`.
 - Per-level counters live in `levelStats[level] = {spawned, hits, wrong, bad}`; `accuracy` = hits / all slices, `hit_rate` = hits / correct foods spawned.
-- Player is anonymous: a random id in `localStorage` (`swether_pid`). Failed sends are queued in `swether_pending_logs` and retried on next load.
+- Player is anonymous: a random id in `localStorage` (`swether_pid`). Failed sends (e.g. offline) are queued in `swether_pending_logs` (max 20) and retried on page load, on the `online` event, and when the page becomes visible again.
+- Each record carries `played_at` (client clock, ISO UTC) and a random `log_id`. The server stores `played_at` (falls back to upload time if invalid, >10 min in the future, or >1 year old) and uses `INSERT OR IGNORE` with a unique index on `log_id` so retries never create duplicates. `created_at` = upload time.
+- All admin stats group by `played_at` converted to Taiwan time (`+8 hours`): daily, weekly (Mon start), weekday, and time-of-day slots.
+- Schema changes must be applied to the production D1 by hand (no migrations folder); add columns before deploying code that writes them.
 - Admin page: `/admin` (`admin.html`) reads `/api/stats` (`functions/api/stats.js`; `?format=csv` for export). Protected by the `ADMIN_KEY` secret set in the Cloudflare Pages dashboard — never put it in `wrangler.toml`. `sw.js` skips `/api/` and `/admin` so they are never cached.
