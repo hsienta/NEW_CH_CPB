@@ -1,0 +1,9 @@
+# Cloudflare Pages 設定（Git 連動部署會讀取此檔）
+name = "new-ch-cpb"
+pages_build_output_dir = "."
+compatibility_date = "2025-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "swether-cpb"
+database_id = "559bd135-43c3-46e2-8566-77abab254414"

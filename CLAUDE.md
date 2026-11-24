@@ -81,3 +81,10 @@ iOS requires user-gesture-gated audio. The game handles this with two separate s
 - **Canvas resize** — only resize when dimensions actually change (`canvas.width !== window.innerWidth`), or the canvas context state is wiped mid-game.
 - **`grantFired` flag** — prevents `grantSoundPermission()` from running twice (iOS fires both `onclick` and `ontouchstart`).
 - **`FISH_KEY` / `VOICE_ID`** constants in `index.html` are legacy — unused but present; leave them.
+
+## Play Logging (NEW_CH_CPB only)
+
+- At `finishGame()` the client POSTs one record per game to `/api/log` (`functions/api/log.js`, a Pages Function).
+- Stored in D1 database `swether-cpb` (binding `DB`, declared in `wrangler.toml`), table `plays`.
+- Per-level counters live in `levelStats[level] = {spawned, hits, wrong, bad}`; `accuracy` = hits / all slices, `hit_rate` = hits / correct foods spawned.
+- Player is anonymous: a random id in `localStorage` (`swether_pid`). Failed sends are queued in `swether_pending_logs` and retried on next load.

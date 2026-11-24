@@ -1,4 +1,4 @@
-const SHELL_VER = 'swether-shell-v3';
+const SHELL_VER = 'swether-shell-v4';
 const ASSETS_VER = 'swether-assets-v4';
 const ALL_CACHES = [SHELL_VER, ASSETS_VER];
 

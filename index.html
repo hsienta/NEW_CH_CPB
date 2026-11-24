@@ -491,6 +491,74 @@
         let correctSpawnCount = 0;  // 本關已出現的正確食物數（保留供難度比例使用）
         let lastCheerGoThreshold = 0;  // 上次播加油聲時的門檻（每關重置）
 
+        // ── 遊玩紀錄（送到 /api/log 存入 D1）─────────────────────────
+        // spawned: 出現的正確食物數；hits: 切對；wrong: 切錯健康食物；bad: 切到垃圾食物
+        let levelStats = {};
+        let gameStartTime = 0;
+        const PENDING_KEY = 'swether_pending_logs';
+
+        function getPlayerId() {
+            try {
+                let id = localStorage.getItem('swether_pid');
+                if (!id) {
+                    id = (crypto.randomUUID ? crypto.randomUUID()
+                        : Date.now().toString(36) + Math.random().toString(36).slice(2));
+                    localStorage.setItem('swether_pid', id);
+                }
+                return id;
+            } catch (e) { return null; }
+        }
+
+        function readPending() {
+            try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); } catch (e) { return []; }
+        }
+        function writePending(list) {
+            try { localStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-20))); } catch (e) {}
+        }
+
+        function postLog(rec) {
+            return fetch('/api/log', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(rec),
+                keepalive: true
+            }).then(r => { if (!r.ok) throw new Error(r.status); });
+        }
+
+        // 網路不穩時先存在本機，下次開啟再補送
+        function flushPendingLogs() {
+            const list = readPending();
+            if (!list.length) return;
+            writePending([]);
+            list.forEach(rec => postLog(rec).catch(() => writePending(readPending().concat([rec]))));
+        }
+
+        function sendGameLog(rawTotal, finalScore) {
+            const levels = [1, 2, 3].map(l => Object.assign(
+                { level: l, score: scores[l] },
+                levelStats[l] || { spawned: 0, hits: 0, wrong: 0, bad: 0 }
+            ));
+            const sum = k => levels.reduce((a, l) => a + l[k], 0);
+            const hits = sum('hits'), wrong = sum('wrong'), bad = sum('bad'), spawned = sum('spawned');
+            const sliced = hits + wrong + bad;
+            const rec = {
+                player_id: getPlayerId(),
+                difficulty: difficulty,
+                duration_sec: gameStartTime ? Math.round((Date.now() - gameStartTime) / 1000) : null,
+                final_score: finalScore,
+                raw_score: rawTotal,
+                accuracy: sliced ? hits / sliced : 0,       // 正確率：切的食物中切對的比例
+                hit_rate: spawned ? hits / spawned : 0,     // 命中率：正確食物中有切到的比例
+                correct_spawned: spawned,
+                correct_hits: hits,
+                wrong_hits: wrong,
+                bad_hits: bad,
+                levels: levels
+            };
+            postLog(rec).catch(() => writePending(readPending().concat([rec])));
+        }
+        window.addEventListener('load', () => setTimeout(flushPendingLogs, 2000));
+
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
 
@@ -608,6 +676,8 @@
 
             currentLevel = level;
             scores[currentLevel] = 0;
+            levelStats[currentLevel] = { spawned: 0, hits: 0, wrong: 0, bad: 0 };
+            if (level === 1) { levelStats = { 1: levelStats[1] }; gameStartTime = Date.now(); }
             correctSpawnCount = 0;  // 重置本關正確食物計數
             lastCheerGoThreshold = 0;  // 重置加油門檻
 
@@ -774,6 +844,7 @@
                 ? (x > nearItem.x ? rawDrift : -rawDrift)
                 : (Math.random() < 0.5 ? rawDrift : -rawDrift);
 
+            if (!isWrong && levelStats[currentLevel]) levelStats[currentLevel].spawned++;
             gameItems.push({
                 x: x,
                 y: -150,  // FOOD_SIZE=150
@@ -985,6 +1056,12 @@
             for (const it of gameItems) {
                 if (!it.sliced && Math.hypot(it.x - x, it.y - y) < 88) {
                     it.sliced = true;
+                    const st = levelStats[currentLevel];
+                    if (st) {
+                        if (!it.isWrong) st.hits++;
+                        else if (it.isBad) st.bad++;
+                        else st.wrong++;
+                    }
                     if (it.isWrong) {
                         scores[currentLevel] = Math.max(0, scores[currentLevel] - SCORE_PENALTY);
                         if (it.isBad) {
@@ -1312,6 +1389,7 @@
             stopBgm();
             const rawTotal = scores[1] + scores[2] + scores[3];
             const finalScore = Math.max(100, rawTotal);  // 保底 100，無上限
+            try { sendGameLog(rawTotal, finalScore); } catch (e) {}
             const resKey = finalScore >= 500 ? 'result1' : (finalScore >= 300 ? 'result2' : 'result3');
             const sfxName = 'cheer';  // 不論結果都播歡呼音效
             showScreen('result', resKey);
