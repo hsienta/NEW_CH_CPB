@@ -1,4 +1,4 @@
-const SHELL_VER = 'swether-shell-v6';
+const SHELL_VER = 'swether-shell-v7';
 const ASSETS_VER = 'swether-assets-v5';
 const ALL_CACHES = [SHELL_VER, ASSETS_VER];
 
@@ -9,6 +9,7 @@ const SHELL_FILES = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
+  './icons/icon-maskable-512.png',
 ];
 
 // 全部遊戲資源（背景預熱用，安裝後自動快取，確保離線也能玩）
