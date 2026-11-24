@@ -1,5 +1,5 @@
-const SHELL_VER = 'swether-shell-v5';
-const ASSETS_VER = 'swether-assets-v4';
+const SHELL_VER = 'swether-shell-v6';
+const ASSETS_VER = 'swether-assets-v5';
 const ALL_CACHES = [SHELL_VER, ASSETS_VER];
 
 const SHELL_FILES = [
@@ -22,10 +22,6 @@ const GAME_ASSETS = [
   './images/bg1.jpg',
   './images/bg2.jpg',
   './images/bg3.jpg',
-  './images/btn_leve1_locked.png',
-  './images/btn_leve2_locked.png',
-  './images/btn_leve3_locked.png',
-  './images/btn_start_locked.png',
   './images/result1.jpg',
   './images/result2.jpg',
   './images/result3.jpg',
@@ -48,12 +44,15 @@ self.addEventListener('install', event => {
       .then(cache => cache.addAll(SHELL_FILES))
       .then(() => {
         // 背景預熱遊戲資源（不阻擋 SW 安裝）
-        caches.open(ASSETS_VER).then(cache => {
-          GAME_ASSETS.forEach(url => {
-            fetch(url).then(res => {
-              if (res.ok) cache.put(url, res);
-            }).catch(() => {});
-          });
+        // 一次只抓一個，避免和首頁載入搶頻寬；已快取的略過
+        caches.open(ASSETS_VER).then(async cache => {
+          for (const url of GAME_ASSETS) {
+            try {
+              if (await cache.match(url)) continue;
+              const res = await fetch(url);
+              if (res.ok) await cache.put(url, res);
+            } catch (e) {}
+          }
         });
       })
       .then(() => self.skipWaiting())
