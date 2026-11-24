@@ -1,4 +1,4 @@
-const SHELL_VER = 'swether-shell-v4';
+const SHELL_VER = 'swether-shell-v5';
 const ASSETS_VER = 'swether-assets-v4';
 const ALL_CACHES = [SHELL_VER, ASSETS_VER];
 
@@ -74,6 +74,8 @@ self.addEventListener('fetch', event => {
   const { request } = event;
   const url = new URL(request.url);
   if (request.method !== 'GET') return;
+  // API 與後台不快取
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/admin')) return;
 
   // 同源的圖片和音效：cache-first
   if (url.origin === self.location.origin &&

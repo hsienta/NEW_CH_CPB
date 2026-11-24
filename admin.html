@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>營養切切樂 後台</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #fff; --text: #1d2433; --muted: #667085;
+    --line: #e4e7ec; --accent: #1a7a2e; --danger: #c0392b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 16px; }
+  h2 { font-size: 16px; margin: 28px 0 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  #login { max-width: 360px; margin: 15vh auto 0; }
+  input[type=password] { width: 100%; padding: 10px 12px; font-size: 16px;
+    border: 1px solid var(--line); border-radius: 8px; margin: 8px 0 12px; }
+  button { padding: 10px 16px; font-size: 15px; border: 0; border-radius: 8px;
+    background: var(--accent); color: #fff; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .err { color: var(--danger); font-size: 14px; min-height: 1.2em; margin: 8px 0 0; }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .bar .actions { display: flex; gap: 8px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .kpi .label { color: var(--muted); font-size: 13px; }
+  .kpi .value { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; white-space: nowrap; }
+  th, td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+  th { background: #fafbfc; color: var(--muted); font-weight: 600; position: sticky; top: 0; }
+  th:first-child, td:first-child { text-align: left; }
+  tr:last-child td { border-bottom: 0; }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+  .hint { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <div id="login" class="card">
+    <h1>營養切切樂 後台</h1>
+    <form id="loginForm">
+      <label for="key">後台密碼</label>
+      <input id="key" type="password" autocomplete="current-password" required>
+      <button type="submit">登入</button>
+      <p id="loginErr" class="err"></p>
+    </form>
+  </div>
+
+  <div id="dash" hidden>
+    <div class="bar">
+      <h1 style="margin:0">營養切切樂 遊玩紀錄</h1>
+      <div class="actions">
+        <button id="refresh" class="secondary">重新整理</button>
+        <button id="csv">下載 CSV（Excel）</button>
+        <button id="logout" class="secondary">登出</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <h2>依難度</h2>
+    <div class="table-wrap"><table id="diffTable"></table></div>
+
+    <h2>每日（台灣時間，最近 30 天）</h2>
+    <div class="table-wrap"><table id="dayTable"></table></div>
+
+    <h2>最近 200 局</h2>
+    <p class="hint">正確率 = 切下去的食物中切對的比例；命中率 = 出現的正確食物中有切到的比例。</p>
+    <div class="table-wrap"><table id="recentTable"></table></div>
+  </div>
+</main>
+
+<script>
+  const KEY_STORE = 'swether_admin_key';
+  const $ = id => document.getElementById(id);
+  const getKey = () => { try { return sessionStorage.getItem(KEY_STORE) || ''; } catch (e) { return ''; } };
+  const setKey = k => { try { k ? sessionStorage.setItem(KEY_STORE, k) : sessionStorage.removeItem(KEY_STORE); } catch (e) {} };
+
+  const num = (v, d = 0) => v == null ? '–' : Number(v).toLocaleString('zh-TW', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const pct = v => v == null ? '–' : (v * 100).toFixed(1) + '%';
+  const dur = s => { if (s == null) return '–'; s = Math.round(s); const m = Math.floor(s / 60); return m ? `${m} 分 ${s % 60} 秒` : `${s} 秒`; };
+  const diffName = d => d === 'expert' ? '達人' : d === 'novice' ? '新手' : (d || '–');
+  const twTime = t => { if (!t) return '–'; const d = new Date(t.replace(' ', 'T') + 'Z');
+    return d.toLocaleString('zh-TW', { timeZone: 'Asia/Taipei', hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function table(el, head, rows) {
+    if (!rows.length) { el.innerHTML = `<tr><td class="empty">還沒有資料</td></tr>`; return; }
+    el.innerHTML = `<thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead>` +
+      `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+  }
+
+  async function api(query = '') {
+    const res = await fetch('/api/stats' + query, { headers: { 'x-admin-key': getKey() }, cache: 'no-store' });
+    if (res.status === 401) throw new Error('密碼錯誤');
+    if (res.status === 503) throw new Error('後台密碼尚未設定（Cloudflare 環境變數 ADMIN_KEY）');
+    if (!res.ok) throw new Error('讀取失敗（' + res.status + '）');
+    return res;
+  }
+
+  async function load() {
+    const data = await (await api()).json();
+    const s = data.summary || {};
+    $('kpis').innerHTML = [
+      ['總局數', num(s.games)], ['玩家數（裝置）', num(s.players)],
+      ['平均分數', num(s.avg_score)], ['平均正確率', pct(s.avg_accuracy)],
+      ['平均命中率', pct(s.avg_hit_rate)], ['平均每局時間', dur(s.avg_duration)],
+      ['累計遊玩時間', dur(s.total_duration)],
+    ].map(([l, v]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+
+    table($('diffTable'), ['難度', '局數', '平均分數', '平均正確率'],
+      data.byDifficulty.map(r => [diffName(r.difficulty), num(r.games), num(r.avg_score), pct(r.avg_accuracy)]));
+    table($('dayTable'), ['日期', '局數', '玩家數', '平均分數'],
+      data.byDay.map(r => [r.day, num(r.games), num(r.players), num(r.avg_score)]));
+    table($('recentTable'),
+      ['時間', '玩家', '難度', '時長', '分數', '正確率', '命中率', '切對', '切錯', '垃圾食物', '第一關', '第二關', '第三關'],
+      data.recent.map(r => [twTime(r.created_at), (r.player_id || '–').slice(0, 8), diffName(r.difficulty),
+        dur(r.duration_sec), num(r.final_score), pct(r.accuracy), pct(r.hit_rate),
+        num(r.correct_hits), num(r.wrong_hits), num(r.bad_hits), num(r.l1_score), num(r.l2_score), num(r.l3_score)]));
+  }
+
+  async function enter() {
+    $('loginErr').textContent = '';
+    try {
+      await load();
+      $('login').hidden = true; $('dash').hidden = false;
+    } catch (e) {
+      setKey('');
+      $('login').hidden = false; $('dash').hidden = true;
+      $('loginErr').textContent = e.message;
+    }
+  }
+
+  $('loginForm').addEventListener('submit', e => { e.preventDefault(); setKey($('key').value); enter(); });
+  $('logout').addEventListener('click', () => { setKey(''); $('key').value = ''; $('login').hidden = false; $('dash').hidden = true; });
+  $('refresh').addEventListener('click', () => load().catch(e => alert(e.message)));
+  $('csv').addEventListener('click', async () => {
+    try {
+      const blob = await (await api('?format=csv')).blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'swether-plays-' + new Date().toISOString().slice(0, 10) + '.csv';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (e) { alert(e.message); }
+  });
+
+  if (getKey()) enter();
+</script>
+</body>
+</html>

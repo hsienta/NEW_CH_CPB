@@ -88,3 +88,4 @@ iOS requires user-gesture-gated audio. The game handles this with two separate s
 - Stored in D1 database `swether-cpb` (binding `DB`, declared in `wrangler.toml`), table `plays`.
 - Per-level counters live in `levelStats[level] = {spawned, hits, wrong, bad}`; `accuracy` = hits / all slices, `hit_rate` = hits / correct foods spawned.
 - Player is anonymous: a random id in `localStorage` (`swether_pid`). Failed sends are queued in `swether_pending_logs` and retried on next load.
+- Admin page: `/admin` (`admin.html`) reads `/api/stats` (`functions/api/stats.js`; `?format=csv` for export). Protected by the `ADMIN_KEY` secret set in the Cloudflare Pages dashboard — never put it in `wrangler.toml`. `sw.js` skips `/api/` and `/admin` so they are never cached.
