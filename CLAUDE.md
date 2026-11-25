@@ -54,7 +54,7 @@ iOS requires user-gesture-gated audio. The game handles this with two separate s
 
 | File | Purpose |
 |------|---------|
-| `manifest.json` | App metadata, icons, `display: standalone` |
+| `manifest.json` | App metadata, icons, `display: standalone`. Served through `functions/manifest.json.js`, which rewrites `start_url` to `./?pid=<device id>` (cookie first, then `?pid=` query). Linked with `crossorigin="use-credentials"` so the cookie is sent. |
 | `sw.js` | Service worker — caching + offline |
 | `icons/` | PNG icons (512, 192, 180 px); regenerate with `python3 gen_icons.py` |
 | `.nojekyll` | Prevents GitHub Pages from running Jekyll |
@@ -69,6 +69,7 @@ iOS requires user-gesture-gated audio. The game handles this with two separate s
 - The owner asked to remove both. There is **no** install-to-home-screen overlay and **no** "new version" toast — do not add them back.
 - New versions install silently: `sw.js` calls `skipWaiting()` + `clients.claim()`, and users get the new `index.html` on their next open.
 - Only change `sw.js` (and bump `SHELL_VER`/`ASSETS_VER`) when cached files actually change; an unchanged `sw.js` means no SW update at all.
+- `sw.js` never caches `/api/*`, `/admin*` or `/manifest.json` (it differs per phone). Navigations to `/` or `/index.html` with any query (`?pid=`, `?openExternalBrowser=`) share one cache entry keyed `./`, so a home-screen launch works offline.
 
 ## Key Constraints
 
@@ -85,7 +86,9 @@ iOS requires user-gesture-gated audio. The game handles this with two separate s
 - **Phone identity (no login, no typing):** each browser gets a random id stored in `localStorage` (`swether_pid`) **and** in a server-set HttpOnly cookie (`swether_pid`, 2 years). The server always prefers the cookie and returns the id, so the id survives iOS Safari wiping script storage. Shared helpers live in `lib/device.js`.
   - On load the game calls `POST /api/device` (`functions/api/device.js`) with the id + a device description (model/OS/browser/screen from `computeDeviceInfo()`), upserting table `devices` (`id, first_seen, last_seen, info, label`).
   - The result screen shows `本機代號 XXXXXX` (first 6 hex chars of the id, uppercase) so staff can match a physical phone to the admin list.
-  - Different browsers on one phone (LINE vs Safari vs home-screen app) have separate storage, so they appear as different phones; the admin merges them by giving them the same name (`POST /api/device-label`, admin-only).
+  - **LINE → browser:** a tiny script at the top of `<head>` redirects LINE's in-app browser to `?openExternalBrowser=1`, so LINE opens the page in Safari/Chrome (shared storage = same phone). It redirects only once; if the param is present and we're still in LINE (old LINE), the game just runs there. Outside LINE the param is stripped.
+  - **iPhone home-screen app** has storage separate from Safari. Bridge: after `syncDevice()`, `pointManifestAtPid()` sets the manifest link to `manifest.json?pid=<id>`, so "Add to Home Screen" stores `start_url=./?pid=<id>`. On launch, `adoptPidFromStartUrl()` adopts that id **only** in standalone mode and only if the app has no id yet, then strips `?pid` from the URL. Android home-screen apps already share Chrome's storage.
+  - Phones still split (e.g. used before these changes, or two different browsers) can be merged in admin by giving them the same name (`POST /api/device-label`, admin-only).
 - Failed sends (e.g. offline) are queued in `swether_pending_logs` (max 20) and retried on page load, on the `online` event, and when the page becomes visible again.
 - Each record carries `played_at` (client clock, ISO UTC) and a random `log_id`. The server stores `played_at` (falls back to upload time if invalid, >10 min in the future, or >1 year old) and uses `INSERT OR IGNORE` with a unique index on `log_id` so retries never create duplicates. `created_at` = upload time.
 - All admin stats group by `played_at` converted to Taiwan time (`+8 hours`): daily, weekly (Mon start), weekday, and time-of-day slots.

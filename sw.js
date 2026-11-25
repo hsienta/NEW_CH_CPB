@@ -1,11 +1,10 @@
-const SHELL_VER = 'swether-shell-v7';
+const SHELL_VER = 'swether-shell-v8';
 const ASSETS_VER = 'swether-assets-v5';
 const ALL_CACHES = [SHELL_VER, ASSETS_VER];
 
 const SHELL_FILES = [
   './',
   './index.html',
-  './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
@@ -74,8 +73,17 @@ self.addEventListener('fetch', event => {
   const { request } = event;
   const url = new URL(request.url);
   if (request.method !== 'GET') return;
-  // API 與後台不快取
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/admin')) return;
+  // API、後台、manifest（每支手機內容不同）不快取
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/admin') ||
+      url.pathname === '/manifest.json') return;
+
+  // 開啟遊戲頁：不論網址帶什麼參數（?pid=、?openExternalBrowser=）都用同一份快取，
+  // 離線從桌面圖示開啟也能用
+  if (request.mode === 'navigate' && url.origin === self.location.origin &&
+      (url.pathname === '/' || url.pathname === '/index.html')) {
+    event.respondWith(staleWhileRevalidate(SHELL_VER, request, './'));
+    return;
+  }
 
   // 同源的圖片和音效：cache-first
   if (url.origin === self.location.origin &&
@@ -109,11 +117,11 @@ async function cacheFirst(cacheName, request) {
   }
 }
 
-async function staleWhileRevalidate(cacheName, request) {
+async function staleWhileRevalidate(cacheName, request, key = request) {
   const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
+  const cached = await cache.match(key);
   const fetchPromise = fetch(request)
-    .then(res => { if (res.ok) cache.put(request, res.clone()); return res; })
+    .then(res => { if (res.ok) cache.put(key, res.clone()); return res; })
     .catch(() => null);
   return cached ?? await fetchPromise;
 }

@@ -5,8 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Swether - 營養切切樂</title>
 
-    <!-- PWA -->
-    <link rel="manifest" href="manifest.json">
+    <script>
+        // 從 LINE 點開時，自動改用手機瀏覽器（Safari / Chrome）開啟。
+        // LINE 內建瀏覽器的資料和手機瀏覽器分開，跳出去才會記成同一支手機。
+        // 已帶 openExternalBrowser 參數還在 LINE 裡（舊版 LINE 不支援）就不再跳，直接在 LINE 裡玩。
+        (function () {
+            try {
+                var u = new URL(location.href);
+                var inLine = /\bLine\//i.test(navigator.userAgent || '');
+                if (inLine && !u.searchParams.has('openExternalBrowser')) {
+                    u.searchParams.set('openExternalBrowser', '1');
+                    location.replace(u.toString());
+                } else if (!inLine && u.searchParams.has('openExternalBrowser')) {
+                    u.searchParams.delete('openExternalBrowser');
+                    history.replaceState(null, '', u.pathname + u.search + u.hash);
+                }
+            } catch (e) {}
+        })();
+    </script>
+
+    <!-- PWA（manifest 由伺服器依手機產生，需帶 cookie） -->
+    <link rel="manifest" href="manifest.json" crossorigin="use-credentials">
     <meta name="theme-color" content="#388E3C">
     <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -498,6 +517,27 @@
         function setPlayerId(id) {
             try { if (id) localStorage.setItem('swether_pid', id); } catch (e) {}
         }
+
+        // iPhone 桌面 App 第一次開啟：沿用 Safari 的代號（manifest 的 start_url 帶 ?pid=）。
+        // 只在「從桌面圖示開啟」且本機還沒有代號時沿用，避免別人轉傳的連結誤用代號。
+        (function adoptPidFromStartUrl() {
+            try {
+                const u = new URL(location.href);
+                const p = u.searchParams.get('pid');
+                if (!p) return;
+                const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+                if (standalone && /^[A-Za-z0-9-]{8,64}$/.test(p) && !localStorage.getItem('swether_pid')) setPlayerId(p);
+                u.searchParams.delete('pid');
+                history.replaceState(null, '', u.pathname + u.search + u.hash);
+            } catch (e) {}
+        })();
+
+        // 讓「加入主畫面」取得的 manifest 帶上這支手機的代號
+        function pointManifestAtPid() {
+            const id = getPlayerId();
+            const link = document.querySelector('link[rel="manifest"]');
+            if (id && link) link.href = 'manifest.json?pid=' + encodeURIComponent(id);
+        }
         // 顯示在結算畫面的短代號，和後台的「手機代號」一致
         function deviceCode() {
             const id = getPlayerId();
@@ -542,14 +582,15 @@
 
         // 開啟遊戲時向伺服器確認本機代號（伺服器以 cookie 為準，可補回被清掉的代號）
         function syncDevice() {
-            if (navigator.onLine === false) return Promise.resolve();
+            if (navigator.onLine === false) { pointManifestAtPid(); return Promise.resolve(); }
             return fetch('/api/device', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify({ pid: getPlayerId(), info: deviceInfoStr })
             }).then(r => r.ok ? r.json() : null)
               .then(j => { if (j && j.pid) setPlayerId(j.pid); })
-              .catch(() => {});
+              .catch(() => {})
+              .then(pointManifestAtPid);
         }
 
         function readPending() {
