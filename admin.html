@@ -37,6 +37,13 @@
   tr:last-child td { border-bottom: 0; }
   .empty { padding: 24px; text-align: center; color: var(--muted); }
   .hint { color: var(--muted); font-size: 13px; }
+  .muted { color: var(--muted); }
+  button.mini { padding: 6px 10px; font-size: 13px; }
+  .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+  tr.selected td { background: #eef7ef; }
+  #filterBar { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    margin-bottom: 12px; background: #eef7ef; border-color: #b7dfbd; }
+  #filterBar[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -61,7 +68,16 @@
       </div>
     </div>
 
+    <div id="filterBar" class="card" hidden>
+      <span>目前只看：<b id="filterName"></b></span>
+      <button id="clearFilter" class="mini">看全部</button>
+    </div>
+
     <div class="kpis" id="kpis"></div>
+
+    <h2>每支手機</h2>
+    <p class="hint">每支手機會自動產生一個代號，長輩不用登入、也不用輸入任何資料。代號顯示在遊戲結算畫面的最下方，對照後可以幫手機取名字。同一個人有兩支手機（或用不同瀏覽器開）時，取一樣的名字就會合併成一列。</p>
+    <div class="table-wrap"><table id="deviceTable"></table></div>
 
     <h2>依難度</h2>
     <div class="table-wrap"><table id="diffTable"></table></div>
@@ -113,6 +129,53 @@
       `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
   }
 
+  // 目前的篩選：{ ids: [...], name: '王奶奶' } 或 null
+  let filter = null;
+  let devices = [];
+  const codeOf = id => id ? id.replace(/-/g, '').slice(0, 6).toUpperCase() : '–';
+  const nameOfPlayer = id => { const d = devices.find(x => x.ids.includes(id)); return d && d.label ? d.label : codeOf(id); };
+
+  function renderDevices() {
+    const el = $('deviceTable');
+    if (!devices.length) { el.innerHTML = `<tr><td class="empty">還沒有資料</td></tr>`; return; }
+    const head = ['名稱', '手機代號', '手機型號', '局數', '平均分數', '平均正確率', '最近一次玩', '第一次玩', ''];
+    el.innerHTML = `<thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>` +
+      devices.map((d, i) => {
+        const sel = filter && filter.ids.join() === d.ids.join() ? ' class="selected"' : '';
+        const name = d.label ? esc(d.label) : '<span class="muted">（未取名）</span>';
+        return `<tr${sel}><td>${name}</td><td>${esc(d.ids.map(codeOf).join('、'))}</td>` +
+          `<td>${esc(d.info || '–')}</td><td>${num(d.games)}</td><td>${num(d.avg_score)}</td>` +
+          `<td>${pct(d.avg_accuracy)}</td><td>${twTime(d.last_tw)}</td><td>${twTime(d.first_tw)}</td>` +
+          `<td><div class="row-actions"><button class="mini secondary" data-rename="${i}">取名字</button>` +
+          `<button class="mini" data-only="${i}">只看這位</button></div></td></tr>`;
+      }).join('') + '</tbody>';
+  }
+
+  $('deviceTable').addEventListener('click', async e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.only != null) {
+      const d = devices[+b.dataset.only];
+      filter = { ids: d.ids, name: d.label || d.ids.map(codeOf).join('、') };
+      await load().catch(err => alert(err.message));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (b.dataset.rename != null) {
+      const d = devices[+b.dataset.rename];
+      const label = prompt(`幫手機 ${d.ids.map(codeOf).join('、')} 取名字（例如：王奶奶）\n留空白 = 清除名字`, d.label || '');
+      if (label === null) return;
+      try {
+        const res = await fetch('/api/device-label', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-admin-key': getKey() },
+          body: JSON.stringify({ ids: d.ids, label })
+        });
+        if (!res.ok) throw new Error('儲存失敗（' + res.status + '）');
+        if (filter && filter.ids.join() === d.ids.join()) filter.name = label.trim() || d.ids.map(codeOf).join('、');
+        await load();
+      } catch (err) { alert(err.message); }
+    }
+  });
+
   async function api(query = '') {
     const res = await fetch('/api/stats' + query, { headers: { 'x-admin-key': getKey() }, cache: 'no-store' });
     if (res.status === 401) throw new Error('密碼錯誤');
@@ -122,10 +185,19 @@
   }
 
   async function load() {
-    const data = await (await api()).json();
+    const data = await (await api(filter ? '?players=' + encodeURIComponent(filter.ids.join(',')) : '')).json();
+    devices = data.byDevice || [];
+    // 取名字後若合併了，更新篩選的手機清單
+    if (filter) {
+      const merged = devices.find(d => d.ids.some(id => filter.ids.includes(id)));
+      if (merged && merged.ids.join() !== filter.ids.join()) { filter.ids = merged.ids; return load(); }
+    }
+    $('filterBar').hidden = !filter;
+    if (filter) $('filterName').textContent = filter.name;
+    renderDevices();
     const s = data.summary || {};
     $('kpis').innerHTML = [
-      ['總局數', num(s.games)], ['玩家數（裝置）', num(s.players)],
+      ['總局數', num(s.games)], ['手機數', num(s.players)],
       ['平均分數', num(s.avg_score)], ['平均正確率', pct(s.avg_accuracy)],
       ['平均命中率', pct(s.avg_hit_rate)], ['平均每局時間', dur(s.avg_duration)],
       ['累計遊玩時間', dur(s.total_duration)],
@@ -143,7 +215,7 @@
     table($('dayTable'), ['日期', ...GROUP_HEAD.slice(1)], data.byDay.map(r => groupRow(r.day, r)));
     table($('recentTable'),
       ['時間', '玩家', '難度', '時長', '分數', '正確率', '命中率', '切對', '切錯', '垃圾食物', '第一關', '第二關', '第三關'],
-      data.recent.map(r => [twTime(r.played_tw), (r.player_id || '–').slice(0, 8), diffName(r.difficulty),
+      data.recent.map(r => [twTime(r.played_tw), nameOfPlayer(r.player_id), diffName(r.difficulty),
         dur(r.duration_sec), num(r.final_score), pct(r.accuracy), pct(r.hit_rate),
         num(r.correct_hits), num(r.wrong_hits), num(r.bad_hits), num(r.l1_score), num(r.l2_score), num(r.l3_score)]));
   }
@@ -161,8 +233,9 @@
   }
 
   $('loginForm').addEventListener('submit', e => { e.preventDefault(); setKey($('key').value); enter(); });
-  $('logout').addEventListener('click', () => { setKey(''); $('key').value = ''; $('login').hidden = false; $('dash').hidden = true; });
+  $('logout').addEventListener('click', () => { setKey(''); filter = null; $('key').value = ''; $('login').hidden = false; $('dash').hidden = true; });
   $('refresh').addEventListener('click', () => load().catch(e => alert(e.message)));
+  $('clearFilter').addEventListener('click', () => { filter = null; load().catch(e => alert(e.message)); });
   $('csv').addEventListener('click', async () => {
     try {
       const blob = await (await api('?format=csv')).blob();

@@ -1,4 +1,5 @@
 // POST /api/log — 接收一局遊戲的紀錄並寫入 D1（binding: DB）
+import { resolvePid, pidCookie, touchDevice } from '../../lib/device.js';
 const int = (v, min = 0, max = 1e7) => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : null;
@@ -35,7 +36,9 @@ export async function onRequestPost({ request, env }) {
   })) : [];
   const lv = i => levels[i]?.score ?? null;
 
-  await env.DB.prepare(
+  const pid = resolvePid(request, d.player_id);
+
+  await env.DB.batch([env.DB.prepare(
     `INSERT OR IGNORE INTO plays (log_id, played_at, player_id, difficulty, duration_sec, final_score, raw_score,
       accuracy, hit_rate, correct_spawned, correct_hits, wrong_hits, bad_hits,
       l1_score, l2_score, l3_score, levels_json, user_agent)
@@ -43,7 +46,7 @@ export async function onRequestPost({ request, env }) {
   ).bind(
     str(d.log_id, 64),
     playedAt(d.played_at),
-    str(d.player_id, 64),
+    pid,
     d.difficulty === 'expert' ? 'expert' : 'novice',
     int(d.duration_sec, 0, 86400),
     int(d.final_score),
@@ -57,9 +60,9 @@ export async function onRequestPost({ request, env }) {
     lv(0), lv(1), lv(2),
     JSON.stringify(levels),
     str(request.headers.get('user-agent'), 300),
-  ).run();
+  ), touchDevice(env.DB, pid, d.device_info)]);
 
-  return new Response(JSON.stringify({ ok: true }), {
-    headers: { 'content-type': 'application/json' },
+  return new Response(JSON.stringify({ ok: true, pid }), {
+    headers: { 'content-type': 'application/json', 'set-cookie': pidCookie(pid) },
   });
 }

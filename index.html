@@ -241,6 +241,12 @@
             pointer-events: none; z-index: 20; white-space: nowrap;
         "></div>
         <button class="btn" onclick="location.reload()"></button>
+        <div id="deviceCode" style="
+            position: absolute; left: 0; right: 0;
+            bottom: calc(env(safe-area-inset-bottom, 0px) + 4px);
+            text-align: center; font-size: 0.85rem; font-weight: 700;
+            color: rgba(0,0,0,0.4); pointer-events: none; z-index: 20;
+        "></div>
     </div>
 
     <script>
@@ -489,6 +495,62 @@
                 return id;
             } catch (e) { return null; }
         }
+        function setPlayerId(id) {
+            try { if (id) localStorage.setItem('swether_pid', id); } catch (e) {}
+        }
+        // 顯示在結算畫面的短代號，和後台的「手機代號」一致
+        function deviceCode() {
+            const id = getPlayerId();
+            return id ? id.replace(/-/g, '').slice(0, 6).toUpperCase() : '';
+        }
+
+        // 手機型號等資訊，讓後台分辨是哪支手機（不需要使用者輸入）
+        let deviceInfoStr = null;
+        async function computeDeviceInfo() {
+            const ua = navigator.userAgent || '';
+            const parts = [];
+            const isIPad = /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            let m;
+            if (/iPhone|iPod/.test(ua) || isIPad) {
+                m = ua.match(/OS (\d+)[_.](\d+)/);
+                parts.push((isIPad ? 'iPad' : 'iPhone') + (m ? ` iOS ${m[1]}.${m[2]}` : ''));
+            } else if (/Android/i.test(ua)) {
+                let ver = (ua.match(/Android ([\d.]+)/) || [])[1] || '';
+                let model = '';
+                try {
+                    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+                        const h = await navigator.userAgentData.getHighEntropyValues(['model', 'platformVersion']);
+                        model = h.model || '';
+                        if (h.platformVersion) ver = h.platformVersion.split('.')[0];
+                    }
+                } catch (e) {}
+                if (!model) {
+                    const mm = ua.match(/Android [\d.]+; ([^;)]+?)(?: Build|\))/);
+                    if (mm && mm[1] !== 'K') model = mm[1];
+                }
+                parts.push(['Android', ver, model].filter(Boolean).join(' '));
+            } else {
+                parts.push(/Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : '電腦');
+            }
+            const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+            parts.push(/\bLine\//i.test(ua) ? 'LINE' : /FBAN|FBAV|FB_IAB/.test(ua) ? 'Facebook'
+                : standalone ? '桌面App' : /SamsungBrowser/.test(ua) ? 'Samsung瀏覽器'
+                : /CriOS|Chrome/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : '瀏覽器');
+            parts.push(screen.width + '×' + screen.height);
+            return parts.join(' · ');
+        }
+
+        // 開啟遊戲時向伺服器確認本機代號（伺服器以 cookie 為準，可補回被清掉的代號）
+        function syncDevice() {
+            if (navigator.onLine === false) return Promise.resolve();
+            return fetch('/api/device', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ pid: getPlayerId(), info: deviceInfoStr })
+            }).then(r => r.ok ? r.json() : null)
+              .then(j => { if (j && j.pid) setPlayerId(j.pid); })
+              .catch(() => {});
+        }
 
         function readPending() {
             try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); } catch (e) { return []; }
@@ -503,7 +565,10 @@
                 headers: { 'content-type': 'application/json' },
                 body: JSON.stringify(rec),
                 keepalive: true
-            }).then(r => { if (!r.ok) throw new Error(r.status); });
+            }).then(r => {
+                if (!r.ok) throw new Error(r.status);
+                return r.json().then(j => { if (j && j.pid) setPlayerId(j.pid); }, () => {});
+            });
         }
 
         // 網路不穩時先存在本機，之後有網路再補送（見下方補傳時機）
@@ -527,6 +592,7 @@
                     : Date.now().toString(36) + Math.random().toString(36).slice(2)),  // 防止補傳時重複
                 played_at: new Date().toISOString(),  // 實際玩完的時間（離線補傳也正確）
                 player_id: getPlayerId(),
+                device_info: deviceInfoStr,
                 difficulty: difficulty,
                 duration_sec: gameStartTime ? Math.round((Date.now() - gameStartTime) / 1000) : null,
                 final_score: finalScore,
@@ -542,7 +608,11 @@
             postLog(rec).catch(() => writePending(readPending().concat([rec])));
         }
         // 補傳時機：開啟遊戲、恢復網路、從背景切回來
-        window.addEventListener('load', () => setTimeout(flushPendingLogs, 2000));
+        window.addEventListener('load', () => setTimeout(() => {
+            computeDeviceInfo().then(i => { deviceInfoStr = i; }, () => {})
+                .then(syncDevice)
+                .then(flushPendingLogs);
+        }, 1500));
         window.addEventListener('online', () => setTimeout(flushPendingLogs, 1000));
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible' && navigator.onLine !== false) flushPendingLogs();
@@ -1385,6 +1455,8 @@
             stopConfetti();
             if (resKey === 'result1') setTimeout(startConfetti, 300);
             const scoreColors = { result1: '#1a5fa8', result2: '#1a7a2e', result3: '#c0392b' };
+            const codeEl = document.getElementById('deviceCode');
+            if (codeEl) codeEl.textContent = deviceCode() ? '本機代號 ' + deviceCode() : '';
             const scoreEl = document.getElementById('result-score');
             scoreEl.textContent = finalScore;
             scoreEl.style.color = scoreColors[resKey];
