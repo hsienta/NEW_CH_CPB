@@ -2,8 +2,9 @@
  * 營養切切樂：每天晚上 12 點左右，把後台資料同步到 Google Drive 資料夾。
  *
  * 會在資料夾裡建立／更新：
- *   1. Google 試算表「營養切切樂 遊玩紀錄」（摘要、每支手機、每週、遊玩紀錄 四個分頁）
- *   2. 子資料夾「每日備份」裡當天的 CSV（保留 60 天）
+ *   1. Google 試算表「營養切切樂 遊玩紀錄」，分頁：
+ *      摘要、每支手機、每日（最近 30 天，含每次開啟的時間點）、每週、開啟紀錄（每次開啟一筆）、遊玩紀錄（每局一筆）
+ *   2. 子資料夾「每日備份」裡當天的兩個 CSV（開啟紀錄、遊玩紀錄，保留 60 天）
  *
  * 安裝（只要做一次，需用電腦）：
  *   1. 打開 https://script.google.com ，按「新專案」
@@ -42,17 +43,23 @@ function setup() {
 function syncNow() {
   const folder = DriveApp.getFolderById(CONFIG.FOLDER_ID);
   const csvText = api_('/api/stats?format=csv').getContentText('UTF-8');
+  const sessionsCsv = api_('/api/stats?format=csv&table=sessions').getContentText('UTF-8');
   const stats = JSON.parse(api_('/api/stats').getContentText('UTF-8'));
   const now = Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd HH:mm');
 
   const ss = getSpreadsheet_(folder);
   writeSummary_(ss, stats, now);
   writeDevices_(ss, stats.byDevice || []);
-  writeWeeks_(ss, stats.byWeek || []);
-  writePlays_(ss, csvText);
-  removeOtherSheets_(ss, ['摘要', '每支手機', '每週', '遊玩紀錄']);
+  writeDays_(ss, stats.usageByDay || [], stats.byDay || []);
+  writeWeeks_(ss, stats.usageByWeek || [], stats.byWeek || []);
+  writeCsvSheet_(ss, '開啟紀錄', 4, sessionsCsv,
+    ['開啟時間(台灣)', '最後使用時間(台灣)', '名稱', '手機代號', '手機型號', '開啟方式', '完整代號'], []);
+  writeCsvSheet_(ss, '遊玩紀錄', 5, csvText,
+    ['遊玩時間(台灣)', '上傳時間(台灣)', '名稱', '手機代號', '手機型號', '難度', '完整代號'], ['正確率', '命中率']);
+  removeOtherSheets_(ss, ['摘要', '每支手機', '每日', '每週', '開啟紀錄', '遊玩紀錄']);
 
-  backupCsv_(folder, csvText);
+  backupCsv_(folder, '遊玩紀錄', csvText);
+  backupCsv_(folder, '開啟紀錄', sessionsCsv);
   console.log('同步完成：' + now + '，共 ' + ((stats.summary || {}).games || 0) + ' 局');
 }
 
@@ -110,60 +117,91 @@ const round_ = v => (v == null ? '' : Math.round(Number(v)));
 const ratio_ = v => (v == null ? '' : Number(v));
 
 function writeSummary_(ss, stats, now) {
-  const s = stats.summary || {};
+  const s = stats.summary || {}, u = stats.usage || {};
   const rows = [
     ['項目', '數值'],
     ['最後更新（台灣時間）', "'" + now],  // 開頭的 ' 讓它保持文字，不被轉成日期
-    ['總局數', s.games || 0],
-    ['手機數', s.players || 0],
+    ['【使用情況】開啟次數', u.opens || 0],
+    ['使用手機數', u.devices || 0],
+    ['總使用分鐘', Math.round((u.total_sec || 0) / 60)],
+    ['平均每次使用秒數', round_(u.avg_sec)],
+    ['平均每支手機使用天數', u.devices ? Math.round(u.device_days / u.devices * 10) / 10 : ''],
+    ['【遊戲成績】玩完局數', s.games || 0],
     ['平均分數', round_(s.avg_score)],
     ['平均正確率', ratio_(s.avg_accuracy)],
     ['平均命中率', ratio_(s.avg_hit_rate)],
     ['平均每局秒數', round_(s.avg_duration)],
-    ['累計遊玩分鐘', s.total_duration == null ? '' : Math.round(s.total_duration / 60)],
     ['後台網址', CONFIG.SITE + '/admin'],
   ];
   const sh = writeSheet_(ss, '摘要', 0, rows, [], []);
-  sh.getRange('B6:B7').setNumberFormat('0.0%');
+  sh.getRange('B10:B11').setNumberFormat('0.0%');  // 平均正確率、平均命中率
 }
 
 function writeDevices_(ss, devices) {
-  const rows = [['名稱', '手機代號', '手機型號', '局數', '平均分數', '平均正確率', '最近一次玩', '第一次玩']]
+  const rows = [['名稱', '手機代號', '手機型號', '開啟次數', '使用天數', '近7天用了幾天', '總使用分鐘', '平均每次使用秒數',
+                 '玩完局數', '平均分數', '平均正確率', '最近一次', '第一次']]
     .concat(devices.map(d => [
       d.label || '（未取名）',
       (d.ids || []).map(codeOf_).join('、'),
       d.info || '',
+      d.opens || 0,
+      d.active_days || 0,
+      Math.min(7, d.days7 || 0),
+      Math.round((d.total_sec || 0) / 60),
+      round_(d.avg_sec),
       d.games || 0,
       round_(d.avg_score),
       ratio_(d.avg_accuracy),
       d.last_tw || '',
       d.first_tw || '',
     ]));
-  writeSheet_(ss, '每支手機', 1, rows, [0, 1, 2, 6, 7], [5]);
+  writeSheet_(ss, '每支手機', 1, rows, [0, 1, 2, 11, 12], [10]);
 }
 
-function writeWeeks_(ss, weeks) {
-  const rows = [['週（從週一開始）', '局數', '手機數', '平均分數', '平均正確率']]
-    .concat(weeks.map(w => [w.week || '', w.games || 0, w.players || 0, round_(w.avg_score), ratio_(w.avg_accuracy)]));
-  writeSheet_(ss, '每週', 2, rows, [0], [4]);
+// 每日：開啟（使用）與玩完局數合併
+function writeDays_(ss, usage, plays) {
+  const u = {}, p = {};
+  usage.forEach(r => { u[r.day] = r; });
+  plays.forEach(r => { p[r.day] = r; });
+  const days = Object.keys(Object.assign({}, u, p)).sort().reverse();
+  const rows = [['日期', '開啟次數', '使用手機數', '總使用分鐘', '平均每次使用秒數', '玩完局數', '平均分數', '平均正確率', '開啟時間點']]
+    .concat(days.map(d => {
+      const a = u[d] || {}, b = p[d] || {};
+      return [d, a.opens || 0, a.devices || 0, Math.round((a.total_sec || 0) / 60), round_(a.avg_sec),
+              b.games || 0, round_(b.avg_score), ratio_(b.avg_accuracy), a.times || ''];
+    }));
+  writeSheet_(ss, '每日', 2, rows, [0, 8], [7]);
 }
 
-function writePlays_(ss, csvText) {
-  const rows = Utilities.parseCsv(csvText.replace(/^﻿/, ''));
+function writeWeeks_(ss, usage, plays) {
+  const u = {}, p = {};
+  usage.forEach(r => { u[r.week] = r; });
+  plays.forEach(r => { p[r.week] = r; });
+  const weeks = Object.keys(Object.assign({}, u, p)).sort().reverse();
+  const rows = [['週（從週一開始）', '開啟次數', '使用手機數', '平均每支手機用幾天', '總使用分鐘', '玩完局數', '平均分數', '平均正確率']]
+    .concat(weeks.map(w => {
+      const a = u[w] || {}, b = p[w] || {};
+      return [w, a.opens || 0, a.devices || 0, a.devices ? Math.round(a.device_days / a.devices * 10) / 10 : '',
+              Math.round((a.total_sec || 0) / 60), b.games || 0, round_(b.avg_score), ratio_(b.avg_accuracy)];
+    }));
+  writeSheet_(ss, '每週', 3, rows, [0], [7]);
+}
+
+// 把後台的 CSV 原樣放進分頁；textNames 的欄位保持文字，pctNames 的欄位顯示成百分比
+function writeCsvSheet_(ss, name, position, csvText, textNames, pctNames) {
+  const rows = Utilities.parseCsv(csvText.replace(/^\uFEFF/, ''));
   if (!rows.length) return;
   const head = rows[0];
-  const col = name => head.indexOf(name);
-  const TEXT = ['遊玩時間(台灣)', '上傳時間(台灣)', '名稱', '手機代號', '手機型號', '難度', '完整代號'];
-  const PCT = ['正確率', '命中率'];
+  const col = n => head.indexOf(n);
   const diff = col('難度');
-  const textIdx = TEXT.map(col).filter(i => i >= 0);
+  const textIdx = textNames.map(col).filter(i => i >= 0);
   const body = rows.slice(1).map(r => r.map((v, i) => {
     if (i === diff) return v === 'expert' ? '達人' : v === 'novice' ? '新手' : v;
     if (textIdx.indexOf(i) >= 0 || v === '') return v;
     const n = Number(v);
     return isNaN(n) ? v : n;
   }));
-  writeSheet_(ss, '遊玩紀錄', 3, [head].concat(body), textIdx, PCT.map(col).filter(i => i >= 0));
+  writeSheet_(ss, name, position, [head].concat(body), textIdx, pctNames.map(col).filter(i => i >= 0));
 }
 
 function removeOtherSheets_(ss, keep) {
@@ -174,10 +212,10 @@ function removeOtherSheets_(ss, keep) {
 
 // ── 每日 CSV 備份 ────────────────────────────────────────
 
-function backupCsv_(folder, csvText) {
+function backupCsv_(folder, prefix, csvText) {
   const subs = folder.getFoldersByName(CONFIG.BACKUP_FOLDER);
   const sub = subs.hasNext() ? subs.next() : folder.createFolder(CONFIG.BACKUP_FOLDER);
-  const name = '遊玩紀錄_' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd') + '.csv';
+  const name = prefix + '_' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyyy-MM-dd') + '.csv';
   const same = sub.getFilesByName(name);
   while (same.hasNext()) same.next().setTrashed(true);
   sub.createFile(name, csvText, MimeType.CSV);

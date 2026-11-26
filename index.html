@@ -15,6 +15,7 @@
                 var inLine = /\bLine\//i.test(navigator.userAgent || '');
                 if (inLine && !u.searchParams.has('openExternalBrowser')) {
                     u.searchParams.set('openExternalBrowser', '1');
+                    window.__swetherRedirecting = true;
                     location.replace(u.toString());
                 } else if (!inLine && u.searchParams.has('openExternalBrowser')) {
                     u.searchParams.delete('openExternalBrowser');
@@ -647,7 +648,157 @@
                 levels: levels
             };
             postLog(rec).catch(() => writePending(readPending().concat([rec])));
+            sessionGameFinished();
         }
+        // ── 使用紀錄（黏著度）────────────────────────────────────────
+        // 每次開啟遊戲算一次「使用」，記錄：開啟時間、實際使用時間、玩完幾局、從哪裡開啟。
+        // 使用時間只算畫面在前景、而且 5 分鐘內有碰過螢幕的時間。
+        // 離開（切到別的 App、鎖螢幕）超過 30 分鐘再回來算新的一次；
+        // 30 分鐘內回來或按「再玩一次」重新整理，仍算同一次。
+        const SESSION_KEY = 'swether_session';
+        const PENDING_SESSIONS_KEY = 'swether_pending_sessions';
+        const SESSION_GAP_MS = 30 * 60 * 1000;
+        const IDLE_MS = 5 * 60 * 1000;
+        let session = null;
+        let lastTick = Date.now();
+        let lastInteraction = Date.now();
+        let lastSentKey = '';
+
+        function newId() {
+            return crypto.randomUUID ? crypto.randomUUID()
+                : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+        }
+        function openSource() {
+            const ua = navigator.userAgent || '';
+            const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+            return standalone ? '桌面App' : /\bLine\//i.test(ua) ? 'LINE'
+                : /FBAN|FBAV|FB_IAB/.test(ua) ? 'Facebook' : '瀏覽器';
+        }
+        function saveSession() {
+            try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (e) {}
+        }
+        function sessionRecord() {
+            return {
+                session_id: session.session_id,
+                player_id: getPlayerId(),
+                started_at: session.started_at,
+                last_active_at: session.last_active_at,
+                active_sec: Math.round(session.active_ms / 1000),
+                games: session.games,
+                source: session.source
+            };
+        }
+        function readPendingSessions() {
+            try { return JSON.parse(localStorage.getItem(PENDING_SESSIONS_KEY) || '{}'); } catch (e) { return {}; }
+        }
+        function writePendingSessions(map) {
+            try {
+                const keys = Object.keys(map);
+                if (keys.length > 50) keys.slice(0, keys.length - 50).forEach(k => delete map[k]);
+                localStorage.setItem(PENDING_SESSIONS_KEY, JSON.stringify(map));
+            } catch (e) {}
+        }
+        function queueSession(rec) {
+            const map = readPendingSessions();
+            map[rec.session_id] = rec;
+            writePendingSessions(map);
+        }
+        function postSession(rec) {
+            return fetch('/api/session', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(rec),
+                keepalive: true
+            }).then(r => {
+                if (!r.ok) throw new Error(r.status);
+                // 送成功就從待補傳清單移除（若清單裡已是更新的資料就保留）
+                const map = readPendingSessions();
+                if (map[rec.session_id] && JSON.stringify(map[rec.session_id]) === JSON.stringify(rec)) {
+                    delete map[rec.session_id];
+                    writePendingSessions(map);
+                }
+            });
+        }
+        function sendSession(leaving) {
+            if (!session) return;
+            const rec = sessionRecord();
+            const key = rec.active_sec + '/' + rec.games;
+            if (!leaving && key === lastSentKey) return;
+            lastSentKey = key;
+            if (leaving || navigator.onLine === false) {
+                // 離開頁面時先存起來，再用 sendBeacon 送；沒送到的下次會補傳（重送不會重複計算）
+                queueSession(rec);
+                try {
+                    if (navigator.sendBeacon && navigator.onLine !== false &&
+                        navigator.sendBeacon('/api/session', new Blob([JSON.stringify(rec)], { type: 'application/json' }))) return;
+                } catch (e) {}
+                if (navigator.onLine === false) return;
+            }
+            postSession(rec).catch(() => queueSession(rec));
+        }
+        function flushPendingSessions() {
+            if (navigator.onLine === false) return;
+            Object.values(readPendingSessions()).forEach(rec => postSession(rec).catch(() => {}));
+        }
+        function startSession() {
+            const now = new Date().toISOString();
+            session = { session_id: newId(), started_at: now, last_active_at: now, active_ms: 0, games: 0, source: openSource() };
+            lastSentKey = '';
+            lastTick = lastInteraction = Date.now();
+            saveSession();
+            sendSession();
+        }
+        function tickSession() {
+            const now = Date.now();
+            if (session && document.visibilityState === 'visible' && now - lastInteraction < IDLE_MS) {
+                session.active_ms += Math.max(0, Math.min(now - lastTick, 15000));
+                session.last_active_at = new Date(now).toISOString();
+                saveSession();
+            }
+            lastTick = now;
+        }
+        function sessionGameFinished() {
+            if (!session) return;
+            tickSession();
+            session.games++;
+            saveSession();
+            sendSession();
+        }
+
+        (function initSession() {
+            if (window.__swetherRedirecting) return;   // 正要從 LINE 跳到瀏覽器，不在這裡記錄
+            try {
+                const s = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
+                if (s && s.session_id && Date.now() - Date.parse(s.last_active_at) < SESSION_GAP_MS) session = s;
+            } catch (e) {}
+            if (!session) startSession();
+
+            ['pointerdown', 'touchstart', 'keydown'].forEach(t =>
+                document.addEventListener(t, () => {
+                    const now = Date.now();
+                    // 畫面一直開著但超過 30 分鐘沒用，再碰螢幕算新的一次
+                    if (session && now - Date.parse(session.last_active_at) >= SESSION_GAP_MS) startSession();
+                    lastInteraction = now;
+                }, { capture: true, passive: true }));
+            setInterval(tickSession, 5000);
+            setInterval(() => { if (document.visibilityState === 'visible') sendSession(); }, 60000);
+
+            const leave = () => { tickSession(); sendSession(true); };
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') { leave(); return; }
+                const now = Date.now();
+                if (!session || now - Date.parse(session.last_active_at) >= SESSION_GAP_MS) {
+                    startSession();
+                } else {
+                    lastTick = lastInteraction = now;
+                }
+                flushPendingSessions();
+            });
+            window.addEventListener('pagehide', leave);
+            window.addEventListener('online', () => setTimeout(flushPendingSessions, 1000));
+            window.addEventListener('load', () => setTimeout(flushPendingSessions, 3000));
+        })();
+
         // 補傳時機：開啟遊戲、恢復網路、從背景切回來
         window.addEventListener('load', () => setTimeout(() => {
             computeDeviceInfo().then(i => { deviceInfoStr = i; }, () => {})

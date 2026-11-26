@@ -8,41 +8,43 @@
 <style>
   :root {
     --bg: #f5f6f8; --card: #fff; --text: #1d2433; --muted: #667085;
-    --line: #e4e7ec; --accent: #1a7a2e; --danger: #c0392b;
+    --line: #e4e7ec; --accent: #1a7a2e; --danger: #c0392b; --soft: #eef7ef;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
     font-family: -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
-  main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
   h1 { font-size: 22px; margin: 0 0 16px; }
   h2 { font-size: 16px; margin: 28px 0 10px; }
+  h3 { font-size: 14px; margin: 18px 0 8px; color: var(--muted); font-weight: 600; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   #login { max-width: 360px; margin: 15vh auto 0; }
   input[type=password] { width: 100%; padding: 10px 12px; font-size: 16px;
     border: 1px solid var(--line); border-radius: 8px; margin: 8px 0 12px; }
   button { padding: 10px 16px; font-size: 15px; border: 0; border-radius: 8px;
-    background: var(--accent); color: #fff; cursor: pointer; }
+    background: var(--accent); color: #fff; cursor: pointer; white-space: nowrap; }
   button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  button.mini { padding: 6px 10px; font-size: 13px; }
   .err { color: var(--danger); font-size: 14px; min-height: 1.2em; margin: 8px 0 0; }
   .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  .bar .actions { display: flex; gap: 8px; }
+  .bar .actions { display: flex; gap: 8px; flex-wrap: wrap; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
   .kpi .label { color: var(--muted); font-size: 13px; }
-  .kpi .value { font-size: 26px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .kpi .value { font-size: 24px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
   .table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
   table { border-collapse: collapse; width: 100%; font-size: 14px; white-space: nowrap; }
   th, td { padding: 8px 12px; border-bottom: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
   th { background: #fafbfc; color: var(--muted); font-weight: 600; position: sticky; top: 0; }
   th:first-child, td:first-child { text-align: left; }
+  td.wrap { white-space: normal; text-align: left; min-width: 160px; }
   tr:last-child td { border-bottom: 0; }
+  tr.selected td { background: var(--soft); }
   .empty { padding: 24px; text-align: center; color: var(--muted); }
-  .hint { color: var(--muted); font-size: 13px; }
+  .hint { color: var(--muted); font-size: 13px; line-height: 1.5; }
   .muted { color: var(--muted); }
-  button.mini { padding: 6px 10px; font-size: 13px; }
   .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
-  tr.selected td { background: #eef7ef; }
   #filterBar { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    margin-bottom: 12px; background: #eef7ef; border-color: #b7dfbd; }
+    margin-bottom: 12px; background: var(--soft); border-color: #b7dfbd; }
   #filterBar[hidden] { display: none; }
 </style>
 </head>
@@ -60,10 +62,11 @@
 
   <div id="dash" hidden>
     <div class="bar">
-      <h1 style="margin:0">營養切切樂 遊玩紀錄</h1>
+      <h1 style="margin:0">營養切切樂 後台</h1>
       <div class="actions">
         <button id="refresh" class="secondary">重新整理</button>
-        <button id="csv">下載 CSV（Excel）</button>
+        <button id="csvPlays">下載遊玩紀錄 CSV</button>
+        <button id="csvSessions">下載開啟紀錄 CSV</button>
         <button id="logout" class="secondary">登出</button>
       </div>
     </div>
@@ -73,30 +76,40 @@
       <button id="clearFilter" class="mini">看全部</button>
     </div>
 
-    <div class="kpis" id="kpis"></div>
+    <h3>使用情況（黏著度）</h3>
+    <div class="kpis" id="usageKpis"></div>
+    <h3>遊戲成績</h3>
+    <div class="kpis" id="playKpis"></div>
 
     <h2>每支手機</h2>
     <p class="hint">每支手機會自動產生一個代號，長輩不用登入、也不用輸入任何資料。代號顯示在遊戲結算畫面的最下方，對照後可以幫手機取名字。同一個人有兩支手機（或用不同瀏覽器開）時，取一樣的名字就會合併成一列。</p>
     <div class="table-wrap"><table id="deviceTable"></table></div>
 
-    <h2>依難度</h2>
-    <div class="table-wrap"><table id="diffTable"></table></div>
-
-    <p class="hint" style="margin-top:20px">以下時間都是「實際玩的時間」（台灣時間）。離線玩、之後才補傳的紀錄也會算在實際玩的那一天。</p>
-
-    <h2>每週（最近 12 週，週一開始）</h2>
-    <div class="table-wrap"><table id="weekTable"></table></div>
-
-    <h2>星期幾玩最多</h2>
-    <div class="table-wrap"><table id="weekdayTable"></table></div>
-
-    <h2>什麼時段玩最多</h2>
-    <div class="table-wrap"><table id="slotTable"></table></div>
+    <p class="hint" style="margin-top:20px">
+      「開啟」＝打開遊戲一次（離開超過 30 分鐘再回來算新的一次；按「再玩一次」不算新的一次）。<br>
+      「使用時間」＝畫面在前景、而且有在操作的時間（5 分鐘沒碰螢幕就不算）。<br>
+      所有時間都是台灣時間；離線時的紀錄之後補傳，也算在實際發生的那一天。
+    </p>
 
     <h2>每日（最近 30 天）</h2>
     <div class="table-wrap"><table id="dayTable"></table></div>
 
-    <h2>最近 200 局（依實際遊玩時間）</h2>
+    <h2>每週（最近 12 週，週一開始）</h2>
+    <div class="table-wrap"><table id="weekTable"></table></div>
+
+    <h2>星期幾</h2>
+    <div class="table-wrap"><table id="weekdayTable"></table></div>
+
+    <h2>什麼時段</h2>
+    <div class="table-wrap"><table id="slotTable"></table></div>
+
+    <h2>依難度</h2>
+    <div class="table-wrap"><table id="diffTable"></table></div>
+
+    <h2>最近 200 次開啟</h2>
+    <div class="table-wrap"><table id="sessionTable"></table></div>
+
+    <h2>最近 200 局</h2>
     <p class="hint">正確率 = 切下去的食物中切對的比例；命中率 = 出現的正確食物中有切到的比例。</p>
     <div class="table-wrap"><table id="recentTable"></table></div>
   </div>
@@ -110,24 +123,36 @@
 
   const num = (v, d = 0) => v == null ? '–' : Number(v).toLocaleString('zh-TW', { maximumFractionDigits: d, minimumFractionDigits: d });
   const pct = v => v == null ? '–' : (v * 100).toFixed(1) + '%';
-  const dur = s => { if (s == null) return '–'; s = Math.round(s); const m = Math.floor(s / 60); return m ? `${m} 分 ${s % 60} 秒` : `${s} 秒`; };
+  const dur = s => {
+    if (s == null) return '–';
+    s = Math.round(s);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h ? `${h} 小時 ${m} 分` : m ? `${m} 分 ${sec} 秒` : `${sec} 秒`;
+  };
   const diffName = d => d === 'expert' ? '達人' : d === 'novice' ? '新手' : (d || '–');
-  // played_tw 已是台灣時間 'YYYY-MM-DD HH:MM:SS'
+  // *_tw 已是台灣時間 'YYYY-MM-DD HH:MM:SS'
   const twTime = t => t ? t.slice(5, 10).replace('-', '/') + ' ' + t.slice(11, 16) : '–';
   const weekLabel = d => { if (!d) return '–'; const end = new Date(d + 'T00:00:00Z'); end.setUTCDate(end.getUTCDate() + 6);
     return d.slice(5).replace('-', '/') + ' – ' + end.toISOString().slice(5, 10).replace('-', '/'); };
   const WEEKDAYS = [[1, '週一'], [2, '週二'], [3, '週三'], [4, '週四'], [5, '週五'], [6, '週六'], [0, '週日']];
   const SLOTS = ['清晨 5–8 點', '上午 8–12 點', '下午 12–17 點', '晚上 17–21 點', '深夜 21–5 點'];
   const byKey = (rows, k) => Object.fromEntries((rows || []).map(r => [r[k], r]));
-  const groupRow = (label, r) => [label, num(r && r.games || 0), num(r && r.players || 0), r ? num(r.avg_score) : '–', r ? pct(r.avg_accuracy) : '–'];
-  const GROUP_HEAD = ['', '局數', '玩家數', '平均分數', '平均正確率'];
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  function table(el, head, rows) {
+  function table(el, head, rows, wrapCols = []) {
     if (!rows.length) { el.innerHTML = `<tr><td class="empty">還沒有資料</td></tr>`; return; }
     el.innerHTML = `<thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead>` +
-      `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+      `<tbody>${rows.map(r => `<tr>${r.map((c, i) => `<td${wrapCols.includes(i) ? ' class="wrap"' : ''}>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
   }
+  const kpis = (el, items) => { el.innerHTML = items.map(([l, v]) =>
+    `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div></div>`).join(''); };
+
+  // 開啟（usage）與遊玩（plays）兩份統計合併成同一列
+  const USAGE_HEAD = ['開啟次數', '使用手機數', '總使用時間', '平均每次使用', '玩完局數', '平均分數', '平均正確率'];
+  const mergedRow = (label, u, p) => [label,
+    num(u ? u.opens : 0), num(u ? u.devices : 0), u ? dur(u.total_sec) : '–', u ? dur(u.avg_sec) : '–',
+    num(p ? p.games : 0), p ? num(p.avg_score) : '–', p ? pct(p.avg_accuracy) : '–'];
+  const unionKeys = (a, b, k) => [...new Set([...(a || []).map(r => r[k]), ...(b || []).map(r => r[k])])];
 
   // 目前的篩選：{ ids: [...], name: '王奶奶' } 或 null
   let filter = null;
@@ -138,14 +163,17 @@
   function renderDevices() {
     const el = $('deviceTable');
     if (!devices.length) { el.innerHTML = `<tr><td class="empty">還沒有資料</td></tr>`; return; }
-    const head = ['名稱', '手機代號', '手機型號', '局數', '平均分數', '平均正確率', '最近一次玩', '第一次玩', ''];
+    const head = ['名稱', '手機代號', '手機型號', '開啟次數', '使用天數', '近 7 天用了幾天', '總使用時間', '平均每次使用',
+      '玩完局數', '平均分數', '平均正確率', '最近一次', '第一次', ''];
     el.innerHTML = `<thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>` +
       devices.map((d, i) => {
         const sel = filter && filter.ids.join() === d.ids.join() ? ' class="selected"' : '';
         const name = d.label ? esc(d.label) : '<span class="muted">（未取名）</span>';
         return `<tr${sel}><td>${name}</td><td>${esc(d.ids.map(codeOf).join('、'))}</td>` +
-          `<td>${esc(d.info || '–')}</td><td>${num(d.games)}</td><td>${num(d.avg_score)}</td>` +
-          `<td>${pct(d.avg_accuracy)}</td><td>${twTime(d.last_tw)}</td><td>${twTime(d.first_tw)}</td>` +
+          `<td>${esc(d.info || '–')}</td><td>${num(d.opens)}</td><td>${num(d.active_days)}</td>` +
+          `<td>${num(Math.min(7, d.days7 || 0))} / 7</td><td>${dur(d.total_sec)}</td><td>${dur(d.avg_sec)}</td>` +
+          `<td>${num(d.games)}</td><td>${num(d.avg_score)}</td><td>${pct(d.avg_accuracy)}</td>` +
+          `<td>${twTime(d.last_tw)}</td><td>${twTime(d.first_tw)}</td>` +
           `<td><div class="row-actions"><button class="mini secondary" data-rename="${i}">取名字</button>` +
           `<button class="mini" data-only="${i}">只看這位</button></div></td></tr>`;
       }).join('') + '</tbody>';
@@ -195,24 +223,48 @@
     $('filterBar').hidden = !filter;
     if (filter) $('filterName').textContent = filter.name;
     renderDevices();
-    const s = data.summary || {};
-    $('kpis').innerHTML = [
-      ['總局數', num(s.games)], ['手機數', num(s.players)],
-      ['平均分數', num(s.avg_score)], ['平均正確率', pct(s.avg_accuracy)],
+
+    const u = data.usage || {}, s = data.summary || {};
+    kpis($('usageKpis'), [
+      ['開啟次數', num(u.opens)], ['使用手機數', num(u.devices)],
+      ['總使用時間', dur(u.total_sec)], ['平均每次使用', dur(u.avg_sec)],
+      ['平均每支手機使用天數', u.devices ? num(u.device_days / u.devices, 1) + ' 天' : '–'],
+    ]);
+    kpis($('playKpis'), [
+      ['玩完局數', num(s.games)], ['平均分數', num(s.avg_score)], ['平均正確率', pct(s.avg_accuracy)],
       ['平均命中率', pct(s.avg_hit_rate)], ['平均每局時間', dur(s.avg_duration)],
-      ['累計遊玩時間', dur(s.total_duration)],
-    ].map(([l, v]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+    ]);
+
+    // 每日：只看單一手機時，多顯示當天每次開啟的時間點
+    const ud = byKey(data.usageByDay, 'day'), pd = byKey(data.byDay, 'day');
+    const days = unionKeys(data.usageByDay, data.byDay, 'day').sort().reverse().slice(0, 30);
+    table($('dayTable'), ['日期', ...USAGE_HEAD, ...(filter ? ['開啟時間點'] : [])],
+      days.map(d => [...mergedRow(d, ud[d], pd[d]), ...(filter ? [ud[d] && ud[d].times || '–'] : [])]),
+      filter ? [USAGE_HEAD.length + 1] : []);
+
+    const uw = byKey(data.usageByWeek, 'week'), pw = byKey(data.byWeek, 'week');
+    const weeks = unionKeys(data.usageByWeek, data.byWeek, 'week').sort().reverse().slice(0, 12);
+    table($('weekTable'), ['週', ...USAGE_HEAD, '平均每支手機用幾天'],
+      weeks.map(w => [...mergedRow(weekLabel(w), uw[w], pw[w]),
+        uw[w] && uw[w].devices ? num(uw[w].device_days / uw[w].devices, 1) + ' 天' : '–']));
+
+    const uwd = byKey(data.usageByWeekday, 'weekday'), pwd = byKey(data.byWeekday, 'weekday');
+    const anyWd = (data.usageByWeekday || []).length || (data.byWeekday || []).length;
+    table($('weekdayTable'), ['星期', ...USAGE_HEAD],
+      anyWd ? WEEKDAYS.map(([k, label]) => mergedRow(label, uwd[k], pwd[k])) : []);
+
+    const us = byKey(data.usageByTimeOfDay, 'slot'), ps = byKey(data.byTimeOfDay, 'slot');
+    const anySlot = (data.usageByTimeOfDay || []).length || (data.byTimeOfDay || []).length;
+    table($('slotTable'), ['時段', ...USAGE_HEAD],
+      anySlot ? SLOTS.map((label, i) => mergedRow(label, us[i], ps[i])) : []);
 
     table($('diffTable'), ['難度', '局數', '平均分數', '平均正確率'],
       data.byDifficulty.map(r => [diffName(r.difficulty), num(r.games), num(r.avg_score), pct(r.avg_accuracy)]));
-    table($('weekTable'), ['週', ...GROUP_HEAD.slice(1)], data.byWeek.map(r => groupRow(weekLabel(r.week), r)));
-    const wd = byKey(data.byWeekday, 'weekday');
-    table($('weekdayTable'), ['星期', ...GROUP_HEAD.slice(1)],
-      data.byWeekday.length ? WEEKDAYS.map(([k, label]) => groupRow(label, wd[k])) : []);
-    const sl = byKey(data.byTimeOfDay, 'slot');
-    table($('slotTable'), ['時段', ...GROUP_HEAD.slice(1)],
-      data.byTimeOfDay.length ? SLOTS.map((label, i) => groupRow(label, sl[i])) : []);
-    table($('dayTable'), ['日期', ...GROUP_HEAD.slice(1)], data.byDay.map(r => groupRow(r.day, r)));
+
+    table($('sessionTable'), ['開啟時間', '玩家', '使用時間', '玩完局數', '開啟方式'],
+      (data.recentSessions || []).map(r => [twTime(r.started_tw), nameOfPlayer(r.player_id),
+        dur(r.active_sec), num(r.games), r.source || '–']));
+
     table($('recentTable'),
       ['時間', '玩家', '難度', '時長', '分數', '正確率', '命中率', '切對', '切錯', '垃圾食物', '第一關', '第二關', '第三關'],
       data.recent.map(r => [twTime(r.played_tw), nameOfPlayer(r.player_id), diffName(r.difficulty),
@@ -232,20 +284,23 @@
     }
   }
 
+  async function downloadCsv(query, name) {
+    try {
+      const blob = await (await api(query)).blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (e) { alert(e.message); }
+  }
+
   $('loginForm').addEventListener('submit', e => { e.preventDefault(); setKey($('key').value); enter(); });
   $('logout').addEventListener('click', () => { setKey(''); filter = null; $('key').value = ''; $('login').hidden = false; $('dash').hidden = true; });
   $('refresh').addEventListener('click', () => load().catch(e => alert(e.message)));
   $('clearFilter').addEventListener('click', () => { filter = null; load().catch(e => alert(e.message)); });
-  $('csv').addEventListener('click', async () => {
-    try {
-      const blob = await (await api('?format=csv')).blob();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'swether-plays-' + new Date().toISOString().slice(0, 10) + '.csv';
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    } catch (e) { alert(e.message); }
-  });
+  $('csvPlays').addEventListener('click', () => downloadCsv('?format=csv', 'swether-plays'));
+  $('csvSessions').addEventListener('click', () => downloadCsv('?format=csv&table=sessions', 'swether-sessions'));
 
   if (getKey()) enter();
 </script>

@@ -1,5 +1,5 @@
 // POST /api/log — 接收一局遊戲的紀錄並寫入 D1（binding: DB）
-import { resolvePid, pidCookie, touchDevice } from '../../lib/device.js';
+import { resolvePid, pidCookie, touchDevice, clientTime } from '../../lib/device.js';
 const int = (v, min = 0, max = 1e7) => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : null;
@@ -9,15 +9,6 @@ const ratio = v => {
   return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : null;
 };
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null);
-
-// 手機回報的實際遊玩時間（UTC），轉成 D1 的 'YYYY-MM-DD HH:MM:SS'。
-// 格式錯誤、比現在晚超過 10 分鐘、或早於一年前就不採用，改用伺服器收到的時間。
-const playedAt = v => {
-  const t = typeof v === 'string' ? Date.parse(v) : NaN;
-  const now = Date.now();
-  if (!Number.isFinite(t) || t > now + 10 * 60e3 || t < now - 365 * 864e5) return null;
-  return new Date(t).toISOString().slice(0, 19).replace('T', ' ');
-};
 
 export async function onRequestPost({ request, env }) {
   let d;
@@ -45,7 +36,7 @@ export async function onRequestPost({ request, env }) {
      VALUES (?,COALESCE(?,datetime('now')),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(
     str(d.log_id, 64),
-    playedAt(d.played_at),
+    clientTime(d.played_at),
     pid,
     d.difficulty === 'expert' ? 'expert' : 'novice',
     int(d.duration_sec, 0, 86400),
