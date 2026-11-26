@@ -106,6 +106,17 @@
     <h2>依難度</h2>
     <div class="table-wrap"><table id="diffTable"></table></div>
 
+    <h2>離開與放著不動（參考數據）</h2>
+    <p class="hint">
+      這部分是額外記錄的原始數據，供評估是否採用：<br>
+      「畫面開著」＝遊戲在前景的總時間（不管有沒有碰）；「放著不動」＝畫面開著但超過 5 分鐘沒碰螢幕的時間；
+      「最長沒碰螢幕」可用來自訂不同的判斷標準。<br>
+      網頁無法分辨「切到別的 App」和「鎖螢幕」，兩者都記為「切到其他畫面或鎖螢幕」。
+    </p>
+    <div class="kpis" id="idleKpis"></div>
+    <h3>離開時在哪個畫面</h3>
+    <div class="table-wrap"><table id="exitTable"></table></div>
+
     <h2>最近 200 次開啟</h2>
     <div class="table-wrap"><table id="sessionTable"></table></div>
 
@@ -261,9 +272,22 @@
     table($('diffTable'), ['難度', '局數', '平均分數', '平均正確率'],
       data.byDifficulty.map(r => [diffName(r.difficulty), num(r.games), num(r.avg_score), pct(r.avg_accuracy)]));
 
-    table($('sessionTable'), ['開啟時間', '玩家', '使用時間', '玩完局數', '開啟方式'],
+    kpis($('idleKpis'), [
+      ['平均每次畫面開著', dur(u.avg_visible_sec)],
+      ['平均每次放著不動', dur(u.avg_idle_sec)],
+      ['有放著不動的開啟', u.opens ? num(u.idle_visits || 0) + ' 次（' + pct((u.idle_visits || 0) / u.opens) + '）' : '–'],
+      ['平均隔多久再打開', u.avg_away_sec == null ? '–' : dur(u.avg_away_sec)],
+    ]);
+    table($('exitTable'), ['離開時的畫面', '次數', '平均使用時間', '平均放著不動', '玩完局數'],
+      (data.byExitScreen || []).map(r => [r.exit_screen, num(r.opens), dur(r.avg_sec), dur(r.avg_idle_sec), num(r.games)]));
+
+    table($('sessionTable'), ['開啟時間', '玩家', '使用時間', '玩完局數', '開啟方式',
+        '畫面開著', '放著不動', '放著不動次數', '最長沒碰螢幕', '離開時間', '離開方式', '離開時的畫面', '距上次離開'],
       (data.recentSessions || []).map(r => [twTime(r.started_tw), nameOfPlayer(r.player_id),
-        dur(r.active_sec), num(r.games), r.source || '–']));
+        dur(r.active_sec), num(r.games), r.source || '–',
+        r.visible_sec == null ? '–' : dur(r.visible_sec), r.visible_sec == null ? '–' : dur(r.idle_sec),
+        r.idle_count == null ? '–' : num(r.idle_count), r.max_no_touch_sec == null ? '–' : dur(r.max_no_touch_sec),
+        twTime(r.ended_tw), r.end_reason || '–', r.exit_screen || '–', r.away_sec == null ? '–' : dur(r.away_sec)]));
 
     table($('recentTable'),
       ['時間', '玩家', '難度', '時長', '分數', '正確率', '命中率', '切對', '切錯', '垃圾食物', '第一關', '第二關', '第三關'],

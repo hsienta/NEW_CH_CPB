@@ -56,6 +56,14 @@ const CSV = {
       ['x.active_sec AS active_sec', '使用秒數'],
       ['x.games AS games', '玩完局數'],
       ['x.source AS source', '開啟方式'],
+      ['x.visible_sec AS visible_sec', '畫面開著秒數'],
+      [`MAX(0, COALESCE(x.visible_sec, x.active_sec) - x.active_sec) AS idle_sec`, '放著不動秒數'],
+      ['x.idle_count AS idle_count', '放著不動次數'],
+      ['x.max_no_touch_sec AS max_no_touch_sec', '最長沒碰螢幕秒數'],
+      [`datetime(x.ended_at, '+8 hours') AS ended_tw`, '離開時間(台灣)'],
+      ['x.end_reason AS end_reason', '離開方式'],
+      ['x.exit_screen AS exit_screen', '離開時的畫面'],
+      ['x.away_sec AS away_sec', '距離上次離開秒數'],
       ['x.player_id AS player_id', '完整代號'],
     ],
   },
@@ -106,14 +114,21 @@ export async function onRequestGet({ request, env }) {
   const sAgg = `COUNT(*) AS opens, COUNT(DISTINCT player_id) AS devices,
     SUM(active_sec) AS total_sec, AVG(active_sec) AS avg_sec`;
 
+  const IDLE = `MAX(0, COALESCE(visible_sec, active_sec) - active_sec)`;
   const [
-    summary, sSummary, byDiff,
+    summary, sSummary, byExit, byDiff,
     byDay, sByDay, byWeek, sByWeek, byWeekday, sByWeekday, byTimeOfDay, sByTimeOfDay,
     recent, recentSessions, byDevice,
   ] = await env.DB.batch([
     q(`SELECT ${pAgg}, AVG(hit_rate) AS avg_hit_rate,
       AVG(duration_sec) AS avg_duration, SUM(duration_sec) AS total_duration FROM ${P}`),
-    q(`SELECT ${sAgg}, COUNT(DISTINCT player_id || '|' || date(${TW_S})) AS device_days FROM ${S}`),
+    q(`SELECT ${sAgg}, COUNT(DISTINCT player_id || '|' || date(${TW_S})) AS device_days,
+      AVG(COALESCE(visible_sec, active_sec)) AS avg_visible_sec, AVG(${IDLE}) AS avg_idle_sec,
+      SUM(CASE WHEN idle_count > 0 THEN 1 ELSE 0 END) AS idle_visits,
+      AVG(away_sec) AS avg_away_sec FROM ${S}`),
+    // 離開時在哪個畫面（只算有記錄到離開的）
+    q(`SELECT exit_screen, COUNT(*) AS opens, AVG(active_sec) AS avg_sec, AVG(${IDLE}) AS avg_idle_sec,
+      SUM(games) AS games FROM ${S} WHERE exit_screen IS NOT NULL GROUP BY exit_screen ORDER BY opens DESC`),
     q(`SELECT difficulty, ${pAgg} FROM ${P} GROUP BY difficulty`),
 
     q(`SELECT date(${TW_P}) AS day, ${pAgg} FROM ${P} GROUP BY day ORDER BY day DESC LIMIT 30`),
@@ -135,7 +150,9 @@ export async function onRequestGet({ request, env }) {
     q(`SELECT id, ${TW_P} AS played_tw, player_id, difficulty, duration_sec, final_score,
       accuracy, hit_rate, correct_hits, wrong_hits, bad_hits, l1_score, l2_score, l3_score
       FROM ${P} ORDER BY played_at DESC, id DESC LIMIT 200`),
-    q(`SELECT ${TW_S} AS started_tw, player_id, active_sec, games, source
+    q(`SELECT ${TW_S} AS started_tw, player_id, active_sec, games, source,
+      visible_sec, ${IDLE} AS idle_sec, idle_count, max_no_touch_sec,
+      datetime(ended_at, '+8 hours') AS ended_tw, end_reason, exit_screen, away_sec
       FROM ${S} ORDER BY started_at DESC LIMIT 200`),
 
     // 每支手機（取了相同名稱的手機合併成一列）；不受篩選影響。
@@ -174,6 +191,7 @@ export async function onRequestGet({ request, env }) {
     filter: ids,
     summary: summary.results[0],
     usage: sSummary.results[0],
+    byExitScreen: byExit.results,
     byDifficulty: byDiff.results,
     byDay: byDay.results,
     usageByDay: sByDay.results,

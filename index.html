@@ -655,7 +655,10 @@
         // 記錄：開啟時間、實際使用時間、玩完幾局、從哪裡開啟。
         // 只有按「再玩一次」重新整理不算新的一次（沒有離開遊戲）。
         // 使用時間只算畫面在前景、而且 5 分鐘內有碰過螢幕的時間。
+        // 另外記錄（供日後評估是否採用）：畫面開著的總時間、放著不動的次數、最長多久沒碰螢幕、
+        // 何時離開、怎麼離開、離開時在哪個畫面、距離上次離開多久。
         const SESSION_KEY = 'swether_session';
+        const LAST_END_KEY = 'swether_last_end';
         const REPLAY_KEY = 'swether_replay';
         const PENDING_SESSIONS_KEY = 'swether_pending_sessions';
         const IDLE_MS = 5 * 60 * 1000;
@@ -685,8 +688,33 @@
                 last_active_at: session.last_active_at,
                 active_sec: Math.round(session.active_ms / 1000),
                 games: session.games,
-                source: session.source
+                source: session.source,
+                visible_sec: Math.round((session.visible_ms || 0) / 1000),
+                idle_count: session.idle_count || 0,
+                max_no_touch_sec: Math.round((session.max_no_touch_ms || 0) / 1000),
+                ended_at: session.ended_at || null,
+                end_reason: session.end_reason || null,
+                exit_screen: session.exit_screen || null,
+                away_sec: session.away_sec == null ? null : session.away_sec
             };
+        }
+        // 目前在遊戲的哪個畫面（離開時記錄）
+        function currentScreenName() {
+            const shown = id => { const el = document.getElementById(id);
+                if (!el) return false; const cs = getComputedStyle(el); return cs.display !== 'none' && cs.opacity !== '0'; };
+            if (shown('soundPermissionOverlay')) return '音量提示';
+            if (shown('difficultyOverlay')) return '選擇難度';
+            const active = document.querySelector('.screen.active');
+            const lv = typeof currentLevel === 'number' ? currentLevel : '';
+            switch (active && active.id) {
+                case 'home': return '首頁';
+                case 'intro': return '說明頁';
+                case 'k1Screen': return '第一關說明';
+                case 'gameContainer': return '第' + lv + '關遊戲中';
+                case 'betweenLevel': return '第' + lv + '關過關';
+                case 'result': return '結算畫面';
+                default: return '其他';
+            }
         }
         function readPendingSessions() {
             try { return JSON.parse(localStorage.getItem(PENDING_SESSIONS_KEY) || '{}'); } catch (e) { return {}; }
@@ -722,7 +750,7 @@
         function sendSession(leaving) {
             if (!session) return;
             const rec = sessionRecord();
-            const key = rec.active_sec + '/' + rec.games;
+            const key = [rec.active_sec, rec.games, rec.visible_sec, rec.idle_count].join('/');
             if (!leaving && key === lastSentKey) return;
             lastSentKey = key;
             if (leaving || navigator.onLine === false) {
@@ -742,7 +770,13 @@
         }
         function startSession() {
             const now = new Date().toISOString();
-            session = { session_id: newId(), started_at: now, last_active_at: now, active_ms: 0, games: 0, source: openSource() };
+            let away = null;
+            try {
+                const lastEnd = Number(localStorage.getItem(LAST_END_KEY));
+                if (lastEnd > 0 && Date.now() >= lastEnd) away = Math.round((Date.now() - lastEnd) / 1000);
+            } catch (e) {}
+            session = { session_id: newId(), started_at: now, last_active_at: now, active_ms: 0, games: 0, source: openSource(),
+                        visible_ms: 0, idle_count: 0, idle_now: false, max_no_touch_ms: 0, away_sec: away };
             lastSentKey = '';
             lastTick = lastInteraction = Date.now();
             saveSession();
@@ -750,9 +784,18 @@
         }
         function tickSession() {
             const now = Date.now();
-            if (session && !session.ended && document.visibilityState === 'visible' && now - lastInteraction < IDLE_MS) {
-                session.active_ms += Math.max(0, Math.min(now - lastTick, 15000));
-                session.last_active_at = new Date(now).toISOString();
+            if (session && !session.ended && document.visibilityState === 'visible') {
+                const dt = Math.max(0, Math.min(now - lastTick, 15000));
+                const noTouch = now - lastInteraction;
+                session.visible_ms = (session.visible_ms || 0) + dt;
+                session.max_no_touch_ms = Math.max(session.max_no_touch_ms || 0, noTouch);
+                if (noTouch < IDLE_MS) {
+                    session.active_ms += dt;
+                    session.last_active_at = new Date(now).toISOString();
+                } else if (!session.idle_now) {
+                    session.idle_now = true;                       // 開始「放著不動」
+                    session.idle_count = (session.idle_count || 0) + 1;
+                }
                 saveSession();
             }
             lastTick = now;
@@ -766,7 +809,9 @@
         }
 
         // 「再玩一次」：標記後重新整理，重新整理後接續同一次開啟
+        let replaying = false;
         function replayGame() {
+            replaying = true;
             try {
                 if (session) sessionStorage.setItem(REPLAY_KEY, JSON.stringify({ id: session.session_id, at: Date.now() }));
             } catch (e) {}
@@ -774,10 +819,14 @@
         }
 
         // 離開遊戲（切到別的 App、鎖螢幕、關掉）：結束這次開啟並送出
-        function endSession() {
+        function endSession(reason) {
             if (!session || session.ended) return;
             tickSession();
             session.ended = true;
+            session.ended_at = new Date().toISOString();
+            session.end_reason = replaying ? '再玩一次' : reason;
+            session.exit_screen = currentScreenName();
+            try { localStorage.setItem(LAST_END_KEY, String(Date.now())); } catch (e) {}
             saveSession();
             sendSession(true);
         }
@@ -800,6 +849,8 @@
                 if (replay && s && replay.id === s.session_id && Date.now() - replay.at < 60000) {
                     session = s;
                     session.ended = false;
+                    session.ended_at = session.end_reason = session.exit_screen = null;
+                    session.idle_now = false;
                     lastTick = lastInteraction = Date.now();
                     saveSession();
                 }
@@ -808,14 +859,17 @@
             if (!session && document.visibilityState === 'visible') startSession();
 
             ['pointerdown', 'touchstart', 'keydown'].forEach(t =>
-                document.addEventListener(t, () => { lastInteraction = Date.now(); }, { capture: true, passive: true }));
+                document.addEventListener(t, () => {
+                    lastInteraction = Date.now();
+                    if (session) session.idle_now = false;
+                }, { capture: true, passive: true }));
             setInterval(tickSession, 5000);
             setInterval(() => { if (document.visibilityState === 'visible') sendSession(); }, 60000);
 
             document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'hidden') endSession(); else resumeOrStartSession();
+                if (document.visibilityState === 'hidden') endSession('切到其他畫面或鎖螢幕'); else resumeOrStartSession();
             });
-            window.addEventListener('pagehide', e => { if (!e.persisted) pageClosing = true; endSession(); });
+            window.addEventListener('pagehide', e => { if (!e.persisted) pageClosing = true; endSession('關閉或重新整理頁面'); });
             window.addEventListener('pageshow', e => { if (e.persisted) { pageClosing = false; resumeOrStartSession(); } });
             window.addEventListener('online', () => setTimeout(flushPendingSessions, 1000));
             window.addEventListener('load', () => setTimeout(flushPendingSessions, 3000));
