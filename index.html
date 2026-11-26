@@ -260,7 +260,7 @@
             font-size: 5rem; font-weight: 900;
             pointer-events: none; z-index: 20; white-space: nowrap;
         "></div>
-        <button class="btn" onclick="location.reload()"></button>
+        <button class="btn" onclick="replayGame()"></button>
         <div id="deviceCode" style="
             position: absolute; left: 0; right: 0;
             bottom: calc(env(safe-area-inset-bottom, 0px) + 4px);
@@ -651,13 +651,13 @@
             sessionGameFinished();
         }
         // ── 使用紀錄（黏著度）────────────────────────────────────────
-        // 每次開啟遊戲算一次「使用」，記錄：開啟時間、實際使用時間、玩完幾局、從哪裡開啟。
+        // 每次「打開遊戲」或「從背景切回遊戲」都算一次開啟（不論離開多久），
+        // 記錄：開啟時間、實際使用時間、玩完幾局、從哪裡開啟。
+        // 只有按「再玩一次」重新整理不算新的一次（沒有離開遊戲）。
         // 使用時間只算畫面在前景、而且 5 分鐘內有碰過螢幕的時間。
-        // 離開（切到別的 App、鎖螢幕）超過 30 分鐘再回來算新的一次；
-        // 30 分鐘內回來或按「再玩一次」重新整理，仍算同一次。
         const SESSION_KEY = 'swether_session';
+        const REPLAY_KEY = 'swether_replay';
         const PENDING_SESSIONS_KEY = 'swether_pending_sessions';
-        const SESSION_GAP_MS = 30 * 60 * 1000;
         const IDLE_MS = 5 * 60 * 1000;
         let session = null;
         let lastTick = Date.now();
@@ -750,7 +750,7 @@
         }
         function tickSession() {
             const now = Date.now();
-            if (session && document.visibilityState === 'visible' && now - lastInteraction < IDLE_MS) {
+            if (session && !session.ended && document.visibilityState === 'visible' && now - lastInteraction < IDLE_MS) {
                 session.active_ms += Math.max(0, Math.min(now - lastTick, 15000));
                 session.last_active_at = new Date(now).toISOString();
                 saveSession();
@@ -765,36 +765,58 @@
             sendSession();
         }
 
+        // 「再玩一次」：標記後重新整理，重新整理後接續同一次開啟
+        function replayGame() {
+            try {
+                if (session) sessionStorage.setItem(REPLAY_KEY, JSON.stringify({ id: session.session_id, at: Date.now() }));
+            } catch (e) {}
+            location.reload();
+        }
+
+        // 離開遊戲（切到別的 App、鎖螢幕、關掉）：結束這次開啟並送出
+        function endSession() {
+            if (!session || session.ended) return;
+            tickSession();
+            session.ended = true;
+            saveSession();
+            sendSession(true);
+        }
+        // 回到遊戲：上一次已結束就算新的一次開啟（頁面正在關閉或重新整理時不算）
+        let pageClosing = false;
+        function resumeOrStartSession() {
+            if (pageClosing) return;
+            if (!session || session.ended) startSession();
+            else lastTick = lastInteraction = Date.now();
+            flushPendingSessions();
+        }
+
         (function initSession() {
             if (window.__swetherRedirecting) return;   // 正要從 LINE 跳到瀏覽器，不在這裡記錄
+            // 只有剛按「再玩一次」的重新整理才接續；其他任何開啟都是新的一次
             try {
+                const replay = JSON.parse(sessionStorage.getItem(REPLAY_KEY) || 'null');
+                sessionStorage.removeItem(REPLAY_KEY);
                 const s = JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null');
-                if (s && s.session_id && Date.now() - Date.parse(s.last_active_at) < SESSION_GAP_MS) session = s;
+                if (replay && s && replay.id === s.session_id && Date.now() - replay.at < 60000) {
+                    session = s;
+                    session.ended = false;
+                    lastTick = lastInteraction = Date.now();
+                    saveSession();
+                }
             } catch (e) {}
-            if (!session) startSession();
+            // 在背景載入的頁面（使用者還沒看到）等真的切到前景才算開啟
+            if (!session && document.visibilityState === 'visible') startSession();
 
             ['pointerdown', 'touchstart', 'keydown'].forEach(t =>
-                document.addEventListener(t, () => {
-                    const now = Date.now();
-                    // 畫面一直開著但超過 30 分鐘沒用，再碰螢幕算新的一次
-                    if (session && now - Date.parse(session.last_active_at) >= SESSION_GAP_MS) startSession();
-                    lastInteraction = now;
-                }, { capture: true, passive: true }));
+                document.addEventListener(t, () => { lastInteraction = Date.now(); }, { capture: true, passive: true }));
             setInterval(tickSession, 5000);
             setInterval(() => { if (document.visibilityState === 'visible') sendSession(); }, 60000);
 
-            const leave = () => { tickSession(); sendSession(true); };
             document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'hidden') { leave(); return; }
-                const now = Date.now();
-                if (!session || now - Date.parse(session.last_active_at) >= SESSION_GAP_MS) {
-                    startSession();
-                } else {
-                    lastTick = lastInteraction = now;
-                }
-                flushPendingSessions();
+                if (document.visibilityState === 'hidden') endSession(); else resumeOrStartSession();
             });
-            window.addEventListener('pagehide', leave);
+            window.addEventListener('pagehide', e => { if (!e.persisted) pageClosing = true; endSession(); });
+            window.addEventListener('pageshow', e => { if (e.persisted) { pageClosing = false; resumeOrStartSession(); } });
             window.addEventListener('online', () => setTimeout(flushPendingSessions, 1000));
             window.addEventListener('load', () => setTimeout(flushPendingSessions, 3000));
         })();
