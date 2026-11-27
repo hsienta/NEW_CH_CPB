@@ -583,6 +583,7 @@
 
         // 開啟遊戲時向伺服器確認本機代號（伺服器以 cookie 為準，可補回被清掉的代號）
         function syncDevice() {
+            if (typeof IS_BOT !== 'undefined' && IS_BOT) return Promise.resolve();   // 自動程式不登記手機
             if (navigator.onLine === false) { pointManifestAtPid(); return Promise.resolve(); }
             return fetch('/api/device', {
                 method: 'POST',
@@ -657,6 +658,13 @@
         // 使用時間只算畫面在前景、而且 5 分鐘內有碰過螢幕的時間。
         // 另外記錄（供日後評估是否採用）：畫面開著的總時間、放著不動的次數、最長多久沒碰螢幕、
         // 何時離開、怎麼離開、離開時在哪個畫面、距離上次離開多久。
+        // 自動程式（搜尋引擎、網站檢查工具等）會短暫打開網頁，不記錄：
+        //   1. 自稱是機器人的瀏覽器一律不記；
+        //   2. 其他開啟要「畫面開著滿 3 秒」或「碰過螢幕」才開始記錄（自動程式通常 1 秒內就關掉）。
+        const IS_BOT = navigator.webdriver === true ||
+            /bot|crawl|spider|slurp|headless|lighthouse|pagespeed|facebookexternalhit|embedly|monitor|uptime|pingdom|gtmetrix/i
+                .test(navigator.userAgent || '');
+        const CONFIRM_MS = 3000;
         const SESSION_KEY = 'swether_session';
         const LAST_END_KEY = 'swether_last_end';
         const REPLAY_KEY = 'swether_replay';
@@ -747,8 +755,14 @@
                 }
             });
         }
+        // 這次開啟是否確定是真人使用（滿 3 秒或碰過螢幕）；確定前不送出任何資料
+        function sessionConfirmed() {
+            if (!session || IS_BOT) return false;
+            if (!session.confirmed && (session.touched || (session.visible_ms || 0) >= CONFIRM_MS)) session.confirmed = true;
+            return !!session.confirmed;
+        }
         function sendSession(leaving) {
-            if (!session) return;
+            if (!session || !sessionConfirmed()) return;
             const rec = sessionRecord();
             const key = [rec.active_sec, rec.games, rec.visible_sec, rec.idle_count].join('/');
             if (!leaving && key === lastSentKey) return;
@@ -782,9 +796,10 @@
             saveSession();
             sendSession();
         }
-        function tickSession() {
+        // leaving=true：離開那一刻呼叫（此時頁面已是隱藏狀態），把離開前最後一段時間也算進去
+        function tickSession(leaving) {
             const now = Date.now();
-            if (session && !session.ended && document.visibilityState === 'visible') {
+            if (session && !session.ended && (leaving || document.visibilityState === 'visible')) {
                 const dt = Math.max(0, Math.min(now - lastTick, 15000));
                 const noTouch = now - lastInteraction;
                 session.visible_ms = (session.visible_ms || 0) + dt;
@@ -796,7 +811,9 @@
                     session.idle_now = true;                       // 開始「放著不動」
                     session.idle_count = (session.idle_count || 0) + 1;
                 }
+                const wasConfirmed = session.confirmed;
                 saveSession();
+                if (!wasConfirmed && sessionConfirmed()) { saveSession(); sendSession(); }   // 剛確認是真人：立刻建立紀錄
             }
             lastTick = now;
         }
@@ -821,12 +838,14 @@
         // 離開遊戲（切到別的 App、鎖螢幕、關掉）：結束這次開啟並送出
         function endSession(reason) {
             if (!session || session.ended) return;
-            tickSession();
+            tickSession(true);
             session.ended = true;
             session.ended_at = new Date().toISOString();
             session.end_reason = replaying ? '再玩一次' : reason;
             session.exit_screen = currentScreenName();
-            try { localStorage.setItem(LAST_END_KEY, String(Date.now())); } catch (e) {}
+            if (sessionConfirmed()) {
+                try { localStorage.setItem(LAST_END_KEY, String(Date.now())); } catch (e) {}
+            }
             saveSession();
             sendSession(true);
         }
@@ -861,7 +880,10 @@
             ['pointerdown', 'touchstart', 'keydown'].forEach(t =>
                 document.addEventListener(t, () => {
                     lastInteraction = Date.now();
-                    if (session) session.idle_now = false;
+                    if (session) {
+                        session.idle_now = false;
+                        if (!session.touched) { session.touched = true; if (sessionConfirmed()) { saveSession(); sendSession(); } }
+                    }
                 }, { capture: true, passive: true }));
             setInterval(tickSession, 5000);
             setInterval(() => { if (document.visibilityState === 'visible') sendSession(); }, 60000);

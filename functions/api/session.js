@@ -20,9 +20,9 @@ export async function onRequestPost({ request, env }) {
   const pid = resolvePid(request, d.player_id);
   await env.DB.prepare(
     `INSERT INTO sessions (id, player_id, started_at, last_active_at, active_sec, games, source,
-       visible_sec, idle_count, max_no_touch_sec, ended_at, end_reason, exit_screen, away_sec)
+       visible_sec, idle_count, max_no_touch_sec, ended_at, end_reason, exit_screen, away_sec, user_agent)
      VALUES (?, ?, COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), ?, ?, ?,
-       ?, ?, ?, ?, ?, ?, ?)
+       ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        last_active_at = MAX(COALESCE(sessions.last_active_at, ''), excluded.last_active_at),
        active_sec = MAX(sessions.active_sec, excluded.active_sec),
@@ -50,6 +50,7 @@ export async function onRequestPost({ request, env }) {
     cleanStr(d.end_reason, 20),
     cleanStr(d.exit_screen, 20),
     intOrNull(d.away_sec, 365 * DAY),
+    cleanStr(request.headers.get('user-agent'), 300),
   ).run();
   return json({ ok: true, pid }, 200, { 'set-cookie': pidCookie(pid) });
 }
